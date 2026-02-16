@@ -3,6 +3,7 @@ node_modules/
 .next/
 dist/
 cakrawings/
+traine/
 
 # Environment files (do not commit secrets)
 .env
