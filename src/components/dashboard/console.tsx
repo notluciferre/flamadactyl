@@ -31,6 +31,7 @@ export function ConsolePanel() {
   const [selectedBotId, setSelectedBotId] = useState<string>('');
   const logsEndRef = useRef<HTMLDivElement>(null);
   const consoleRef = useRef<HTMLDivElement>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
 
   useEffect(() => {
     if (user) {
@@ -60,14 +61,9 @@ export function ConsolePanel() {
   }, [user]);
 
   useEffect(() => {
-    // Only auto-scroll if user is already at bottom
-    if (consoleRef.current) {
-      const { scrollTop, scrollHeight, clientHeight } = consoleRef.current;
-      const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-      
-      if (isAtBottom) {
-        consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
-      }
+    // Auto-scroll when logs update only if user is already at bottom
+    if (consoleRef.current && isAtBottom) {
+      consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
     }
   }, [logs]);
 
@@ -98,6 +94,24 @@ export function ConsolePanel() {
       };
     }
   }, [selectedBotId, bots]);
+
+  // Track scroll position to show/hide floating "scroll to bottom" button
+  useEffect(() => {
+    const el = consoleRef.current;
+    if (!el) return;
+
+    const onScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = el;
+      const atBottom = scrollHeight - scrollTop - clientHeight < 50;
+      setIsAtBottom(atBottom);
+    };
+
+    el.addEventListener('scroll', onScroll, { passive: true });
+    // initialize
+    onScroll();
+
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [consoleRef]);
 
   const handleCommand = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -204,15 +218,6 @@ export function ConsolePanel() {
           <Button 
             size="sm" 
             variant="outline"
-            onClick={scrollToBottom}
-            className="h-8"
-            title="Scroll to bottom"
-          >
-            <ChevronsDown className="h-4 w-4" />
-          </Button>
-          <Button 
-            size="sm" 
-            variant="outline"
             onClick={clearLogs}
             className="h-8"
             title="Clear logs"
@@ -221,13 +226,32 @@ export function ConsolePanel() {
           </Button>
         </div>
       </div>
-      <div ref={consoleRef} className="h-80 overflow-y-auto p-4 font-mono text-sm">
+      <div className="relative">
+        <div ref={consoleRef} className="h-80 overflow-y-auto p-4 font-mono text-sm no-scrollbar">
         {logs.map((log, i) => (
           <div key={i} className="text-gray-300 py-0.5">
             {log}
           </div>
         ))}
         <div ref={logsEndRef} />
+        </div>
+
+        {/* Floating scroll-to-bottom button */}
+        {!isAtBottom && (
+          <div className="absolute bottom-3 right-3">
+            <Button
+              size="sm"
+              onClick={() => {
+                scrollToBottom();
+                setIsAtBottom(true);
+              }}
+              className="h-9 w-9 rounded-full p-2 shadow-lg"
+              title="Scroll to latest"
+            >
+              <ChevronsDown className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
       </div>
       <form onSubmit={handleCommand} className="border-t border-border p-3 flex gap-2">
         <input

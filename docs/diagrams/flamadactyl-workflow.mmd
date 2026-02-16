@@ -1,0 +1,48 @@
+flowchart LR
+  %% Flamadactyl workflow
+  subgraph User
+    U[User]
+  end
+
+  subgraph Frontend
+    Web["Next.js Frontend<br/>(app/, components/, pages/)"]
+    Dashboard[Dashboard UI]
+  end
+
+  subgraph API
+    APIRoutes["API Routes (/api/*)"]
+    Auth["Auth: Firebase / Supabase"]
+    DB["DB: Supabase / Firebase"]
+    Bots["Bot Service<br/>(create/delete/command/logs/status)"]
+    Nodes["Node Service<br/>(register/heartbeat/list)"]
+  end
+
+  subgraph Flamawings
+    FW["Flamawings (proxy, node-server-firebase.js, proxy-manager.js)"]
+  end
+
+  subgraph Workers
+    Worker[Worker Nodes]
+  end
+
+  U --> Web
+  Web --> Dashboard
+  Web --> APIRoutes
+
+  APIRoutes --> Auth
+  APIRoutes --> Bots
+  APIRoutes --> Nodes
+  APIRoutes --> DB
+
+  Bots --> FW
+  FW --> Worker
+  Worker --> Nodes
+
+  Bots --> DB
+  Nodes --> DB
+  Worker --> DB
+
+  Dashboard --> APIRoutes
+
+  classDef infra fill:#f9f,stroke:#333,stroke-width:1px;
+  class FW,Worker infra

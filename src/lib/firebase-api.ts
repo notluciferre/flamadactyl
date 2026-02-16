@@ -196,7 +196,7 @@ export function listenToBotLogs(botId: string, callback: (log: BotLog) => void) 
 
 // ===== COMMAND OPERATIONS =====
 
-export async function sendBotCommand(nodeId: string, action: 'start' | 'stop' | 'restart' | 'exec', botId: string, payload?: any) {
+export async function sendBotCommand(nodeId: string, action: 'start' | 'stop' | 'restart' | 'exec' | 'delete', botId: string, payload?: any) {
   const db = getDb();
   if (!db) throw new Error('Firebase not initialized');
 

@@ -50,6 +50,7 @@ export const BotCard = memo(function BotCard({
   const isStopped = botStatus === 'stopped' || botStatus === 'error';
   const isError = botStatus === 'error';
   const isTransitioning = botStatus === 'starting' || botStatus === 'stopping';
+  const canStop = isRunning || botStatus === 'starting';
 
   return (
     <Card className="hover:shadow-md transition">
@@ -100,7 +101,7 @@ export const BotCard = memo(function BotCard({
                   <Play className="w-3 h-3" />
                   Start
                 </Button>
-              ) : isRunning ? (
+              ) : canStop ? (
                 <>
                   <Button
                     size="sm"
@@ -185,7 +186,7 @@ export const BotCard = memo(function BotCard({
                 <Play className="w-3 h-3" />
                 Start
               </Button>
-            ) : isRunning ? (
+            ) : canStop ? (
               <>
                 <Button
                   size="sm"

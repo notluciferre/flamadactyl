@@ -23,7 +23,7 @@ import {
   DialogTrigger,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { Server, Activity, RefreshCw, Plus, Trash2, Copy, Check } from 'lucide-react';
+import { Server, Activity, RefreshCw, Plus, Trash2, Copy, Check, Edit2 } from 'lucide-react';
 
 const ADMIN_EMAIL = 'admin@cakranode.tech';
 
@@ -51,6 +51,10 @@ export default function NodesPage() {
   const [newNode, setNewNode] = useState({ name: '', location: '', ip_address: 'auto' });
   const [createdToken, setCreatedToken] = useState<string | null>(null);
   const [tokenCopied, setTokenCopied] = useState(false);
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editingNode, setEditingNode] = useState<NodeWithStats | null>(null);
+  const [editingForm, setEditingForm] = useState({ name: '', location: '', ip_address: '' });
+  const [isUpdating, setIsUpdating] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -162,6 +166,51 @@ export default function NodesPage() {
       navigator.clipboard.writeText(createdToken);
       setTokenCopied(true);
       setTimeout(() => setTokenCopied(false), 2000);
+    }
+  };
+
+  const openEdit = (node: NodeWithStats) => {
+    setEditingNode(node);
+    setEditingForm({ name: node.name || '', location: node.location || '', ip_address: node.ip_address || 'auto' });
+    setIsEditOpen(true);
+  };
+
+  const handleUpdateNode = async () => {
+    if (!editingNode) return;
+
+    setIsUpdating(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('No session');
+
+      const response = await fetch('/api/nodes/update', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          node_id: editingNode.id,
+          name: editingForm.name,
+          location: editingForm.location,
+          ip_address: editingForm.ip_address,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        showToast('Node updated successfully!', 'success', '✅ Updated');
+        setIsEditOpen(false);
+        setEditingNode(null);
+        fetchNodes();
+      } else {
+        showToast(`Failed: ${data.error}`, 'error');
+      }
+    } catch (error: any) {
+      showToast(`Error: ${error.message}`, 'error');
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -340,15 +389,59 @@ export default function NodesPage() {
                   )}
                 </DialogContent>
               </Dialog>
+              <Dialog open={isEditOpen} onOpenChange={(open) => {
+                setIsEditOpen(open);
+                if (!open) setEditingNode(null);
+              }}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Edit Node</DialogTitle>
+                    <DialogDescription>Update node details</DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-name">Node Name *</Label>
+                      <Input
+                        id="edit-name"
+                        placeholder="SG-Node-1"
+                        value={editingForm.name}
+                        onChange={(e) => setEditingForm({ ...editingForm, name: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-location">Location *</Label>
+                      <Input
+                        id="edit-location"
+                        placeholder="Singapore"
+                        value={editingForm.location}
+                        onChange={(e) => setEditingForm({ ...editingForm, location: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-ip">IP Address</Label>
+                      <Input
+                        id="edit-ip"
+                        placeholder="auto (recommended)"
+                        value={editingForm.ip_address}
+                        onChange={(e) => setEditingForm({ ...editingForm, ip_address: e.target.value })}
+                      />
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setIsEditOpen(false)}>Cancel</Button>
+                      <Button onClick={handleUpdateNode} disabled={isUpdating}>{isUpdating ? 'Updating...' : 'Update Node'}</Button>
+                    </DialogFooter>
+                  </div>
+                </DialogContent>
+              </Dialog>
             </div>
           </div>
 
           {/* Nodes Grid */}
           {isLoadingNodes ? (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {[1, 2, 3].map((i) => (
-                <Card key={i}>
-                  <CardContent className="p-6">
+                <Card key={i} className="min-h-[18rem]">
+                  <CardContent className="p-6 flex flex-col justify-between h-full">
                     <div className="flex items-start justify-between mb-4">
                       <div className="flex items-center gap-3">
                         <Skeleton className="h-9 w-9 rounded-lg" />
@@ -381,10 +474,10 @@ export default function NodesPage() {
               </CardContent>
             </Card>
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {nodes.map((node) => (
-                <Card key={node.id} className="relative">
-                  <CardContent className="p-6">
+                <Card key={node.id} className="relative min-h-[18rem]">
+                  <CardContent className="p-6 flex flex-col justify-between h-full">
                     <div className="flex items-start justify-between mb-4">
                       <div className="flex items-center gap-3">
                         <div className="rounded-lg bg-muted p-2">
@@ -436,15 +529,26 @@ export default function NodesPage() {
                     </div>
 
                     <div className="pt-4 border-t">
-                      <Button
-                        onClick={() => handleDeleteNode(node.id, node.name)}
-                        variant="destructive"
-                        size="sm"
-                        className="w-full"
-                      >
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        Delete Node
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => openEdit(node)}
+                          variant="outline"
+                          size="sm"
+                          className="flex-1"
+                        >
+                          <Edit2 className="w-4 h-4 mr-2" />
+                          Edit
+                        </Button>
+                        <Button
+                          onClick={() => handleDeleteNode(node.id, node.name)}
+                          variant="destructive"
+                          size="sm"
+                          className="flex-1"
+                        >
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          Delete Node
+                        </Button>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>

@@ -54,7 +54,7 @@ function SidebarContent({ pathname, isAdmin }: SidebarContentProps) {
               className={cn(
                 'flex items-center gap-3 px-6 py-3 text-[13px] transition-colors relative group',
                 isActive
-                  ? 'text-red-500 bg-red-500/5'
+                  ? 'text-primary bg-gradient-to-r from-red-600/25 to-transparent'
                   : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/50'
               )}
             >
@@ -104,7 +104,7 @@ export function DashboardSidebar() {
                   className={cn(
                     'flex flex-col items-center justify-center gap-1 px-3 py-2 rounded-lg min-w-[60px] transition-colors',
                     isActive
-                      ? 'text-red-500 bg-red-500/10'
+                      ? 'text-white bg-gradient-to-t from-red-600/10 to-transparent'
                       : 'text-zinc-400 hover:text-zinc-100'
                   )}
                 >

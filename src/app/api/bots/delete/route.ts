@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { verifyUser, verifyAdmin } from '@/lib/auth-helpers';
+import { initFirebase } from '@/lib/firebase';
+import { sendBotCommand } from '@/lib/firebase-api';
 
 const NODE_SECRET_KEY = process.env.NODE_SECRET_KEY || 'cakranode-secret-2026';
 
@@ -30,7 +32,7 @@ export async function POST(request: NextRequest) {
       // Check ownership or admin
       const { data: bot, error: fetchError } = await supabaseAdmin
         .from('bots')
-        .select('user_id')
+        .select('user_id, node_id')
         .eq('id', bot_id)
         .maybeSingle();
 
@@ -38,19 +40,39 @@ export async function POST(request: NextRequest) {
 
       // allow if owner
       if (bot?.user_id === userId) {
-        const { error: deleteError } = await supabaseAdmin
-          .from('bots')
-          .delete()
-          .eq('id', bot_id);
+          // send delete command to node (notify node to stop/cleanup)
+            try {
+              initFirebase();
+              if (bot?.node_id) {
+                await sendBotCommand(bot.node_id, 'delete', bot_id, {});
+              }
+            } catch (cmdErr) {
+            console.warn('Failed to send delete command to node (non-fatal):', cmdErr);
+          }
 
-        if (deleteError) throw deleteError;
+          const { error: deleteError } = await supabaseAdmin
+            .from('bots')
+            .delete()
+            .eq('id', bot_id);
 
-        return NextResponse.json({ success: true, message: 'Bot deleted successfully' });
+          if (deleteError) throw deleteError;
+
+          return NextResponse.json({ success: true, message: 'Bot deleted successfully' });
       }
 
       // allow if admin
       const { isAdmin } = await verifyAdmin(token);
       if (isAdmin) {
+        // send delete command to node (notify node to stop/cleanup)
+        try {
+          initFirebase();
+          if (bot?.node_id) {
+            await sendBotCommand(bot.node_id, 'delete', bot_id, {});
+          }
+        } catch (cmdErr) {
+          console.warn('Failed to send delete command to node (non-fatal):', cmdErr);
+        }
+
         const { error: deleteError } = await supabaseAdmin
           .from('bots')
           .delete()
@@ -100,7 +122,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid secret key' }, { status: 401 });
     }
 
-    // Delete bot from database (secret-key flow)
+    // Delete bot from database (secret-key flow) -- but notify node first
+    try {
+      initFirebase();
+      if (nodeId) {
+        await sendBotCommand(nodeId, 'delete', bot_id, {});
+      }
+    } catch (cmdErr) {
+      console.warn('Failed to send delete command to node (non-fatal):', cmdErr);
+    }
+
     const { error: deleteError } = await supabaseAdmin
       .from('bots')
       .delete()

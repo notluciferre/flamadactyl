@@ -246,6 +246,15 @@
     }
   }
 
+  /* Utility to hide native scrollbars while preserving scroll functionality */
+  .no-scrollbar {
+    -ms-overflow-style: none; /* IE and Edge */
+    scrollbar-width: none; /* Firefox */
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none; /* Chrome, Safari, Opera */
+  }
+
   /* Safe area for notched devices */
   @supports (padding: max(0px)) {
     body {

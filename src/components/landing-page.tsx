@@ -3,8 +3,22 @@ import { Button } from "@/components/ui/button";
 import Navbar from "@/components/sections/navbar/navbar";
 import Items from "@/components/sections/items/default";
 import TypingText from "@/components/ui/typing-text";
+import { Safari } from "./ui/safari";
 
 export function LandingPage() {
+  // Image original dimensions
+  const imgW = 1914
+  const imgH = 876
+  const imgRatio = imgW / imgH
+
+  // Safari SVG base dimensions (must match values in Safari component)
+  const BASE_WIDTH = 1203
+  const BASE_HEIGHT = 753
+
+  // Adjustment factor to account for the Safari chrome area (top 52px and 2px horizontal padding)
+  const A = ((BASE_WIDTH - 2) / BASE_WIDTH) * (BASE_HEIGHT / (BASE_HEIGHT - 52))
+  const adjustedAspect = imgRatio / A
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -25,8 +39,8 @@ export function LandingPage() {
 
       {/* Hero Section */}
       <section className="container mx-auto px-4 sm:px-6 lg:px-8 py-16 md:py-20 lg:py-24">
-        <div className="grid lg:grid-cols-2 gap-8 lg:gap-12 items-center">
-          <div className="space-y-6 md:space-y-8">
+        <div className="flex flex-col items-center gap-8 lg:gap-12 text-center">
+          <div className="space-y-6 md:space-y-8 max-w-2xl mx-auto">
             
             <h1 className="font-extrabold text-4xl sm:text-5xl md:text-5xl lg:text-6xl leading-tight">
             <span  className="text-foreground">Helping you make</span>{" "}
@@ -42,70 +56,35 @@ export function LandingPage() {
             <span className="text-primary">Bots</span>
             </h1>
 
-            <div className="flex flex-col sm:flex-row gap-4">
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <Link href="/register">
                 <Button size="lg" className="w-full sm:w-auto text-foreground">
-                  Schedule A Demo
+                  Get Started
                 </Button>
               </Link>
-              <Button size="lg" variant="outline" className="w-full sm:w-auto gap-2">
-                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" />
-                </svg>
-                Watch Video
-              </Button>
+              <a href="https://t.me/lucifereous64">
+                <Button size="lg" variant="outline" className="w-full sm:w-auto gap-2">
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" />
+                  </svg>
+                  Contact Admin
+                </Button>
+              </a>
             </div>
           </div>
 
           {/* Hero Image/Visual */}
-          <div className="relative">
-            <div className="relative">
-              <div className="bg-card rounded-lg shadow-2xl p-6 space-y-4">
-                {/* Terminal-like visualization */}
-                <div className="flex items-center gap-2 pb-3 border-b">
-                  <div className="flex gap-1.5">
-                    <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                    <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
-                    <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                  </div>
-                  <span className="text-sm text-muted-foreground ml-2">cakranode-terminal</span>
-                </div>
-                
-                <div className="font-mono text-sm space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-green-500">$</span>
-                    <span className="text-foreground">npm install cakranode-cli</span>
-                  </div>
-                  <div className="text-muted-foreground">Installing packages...</div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-green-500">✓</span>
-                    <span>Bot deployed successfully!</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-blue-500">ℹ</span>
-                    <span>Status: Running (99.9% uptime)</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-purple-500">●</span>
-                    <span>Memory: 256MB / 512MB</span>
-                  </div>
-                </div>
-
-                {/* Stats Cards */}
-                <div className="grid grid-cols-2 gap-3 pt-4">
-                  <div className="bg-muted/50 rounded-lg p-3">
-                    <div className="text-2xl font-bold">99.9%</div>
-                    <div className="text-xs text-muted-foreground">Uptime</div>
-                  </div>
-                  <div className="bg-muted/50 rounded-lg p-3">
-                    <div className="text-2xl font-bold">&lt;50ms</div>
-                    <div className="text-xs text-muted-foreground">Response Time</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Floating badges */}
-            </div>
+          <div
+            className="relative w-full mt-4 max-w-[1200px] mx-auto"
+            style={{ aspectRatio: `${adjustedAspect} / 1` }}
+          >
+            <Safari
+              className="rounded-lg shadow-lg"
+              width="100%"
+              height="100%"
+              imageSrc="/images/botnetpage.png"
+              url="https://flamahost.com/dashboard"
+            />
           </div>
         </div>
       </section>
