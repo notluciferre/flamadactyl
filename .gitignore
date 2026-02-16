@@ -2,9 +2,9 @@
 node_modules/
 .next/
 dist/
-cakrawings/
-traine/
-.agents/
+cakrawings
+/traine
+/.agents
 # Environment files (do not commit secrets)
 .env
 .env.*
