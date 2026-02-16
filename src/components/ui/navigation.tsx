@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import * as React from "react";
 import { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
-import LaunchUI from "../logos/launch-ui";
 import {
   NavigationMenu,
   NavigationMenuContent,
@@ -57,7 +57,7 @@ export default function Navigation({
     {
       title: "Documentation",
       isLink: true,
-      href: "https://www.launchuicomponents.com/",
+      href: "/docs",
     },
   ],
   components = [
@@ -97,26 +97,26 @@ export default function Navigation({
         "A popup that displays information related to an element when the element receives keyboard focus or the mouse hovers over it.",
     },
   ],
-  logo = <LaunchUI />,
-  logoTitle = "Launch UI",
-  logoDescription = "Landing page template built with React, Shadcn/ui and Tailwind that you can copy/paste into your project.",
-  logoHref = "https://www.launchuicomponents.com/",
+  logo = <Image src="/flamma.svg" alt="Flamma Logo" width={120} height={40} className="object-contain" />,
+  logoTitle = "Flamma",
+  logoDescription = "Your application description here.",
+  logoHref = "/",
   introItems = [
     {
       title: "Introduction",
-      href: "https://www.launchuicomponents.com/",
+      href: "/",
       description:
-        "Re-usable components built using Radix UI and Tailwind CSS.",
+        "Welcome to our platform.",
     },
     {
-      title: "Installation",
-      href: "https://www.launchuicomponents.com/",
-      description: "How to install dependencies and structure your app.",
+      title: "Dashboard",
+      href: "/dashboard",
+      description: "Access your dashboard and manage your account.",
     },
     {
-      title: "Typography",
-      href: "https://www.launchuicomponents.com/",
-      description: "Styles for headings, paragraphs, lists...etc",
+      title: "Documentation",
+      href: "/docs",
+      description: "Learn more about our features and capabilities.",
     },
   ],
 }: NavigationProps) {

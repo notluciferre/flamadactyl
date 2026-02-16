@@ -1,11 +1,10 @@
 import { type VariantProps } from "class-variance-authority";
 import { Menu } from "lucide-react";
 import { ReactNode } from "react";
+import Image from "next/image";
 
 import { siteConfig } from "@/config/site";
 import { cn } from "@/lib/utils";
-
-import LaunchUI from "@/components/logos/launch-ui";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Navbar as NavbarComponent,
@@ -41,8 +40,8 @@ interface NavbarProps {
 }
 
 export default function Navbar({
-  logo = <LaunchUI />,
-  name = "Launch UI",
+  logo = <Image src="/flamma.svg" alt="Flamma Logo" width={40} height={40} className="object-contain" />,
+  name = "CakraNode",
   homeUrl = siteConfig.url,
   mobileLinks = [
     { text: "Getting Started", href: siteConfig.url },

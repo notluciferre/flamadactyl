@@ -1,14 +1,18 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
+import { useToast } from '@/components/ui/toast-notification';
+import { initFirebase } from '@/lib/firebase';
+import { sendBotCommand, listenToCommandResult, deleteBotData } from '@/lib/firebase-api';
+import { useOptimizedFirebaseBots } from '@/hooks/useOptimizedFirebase';
 import { DashboardSidebar } from '@/components/dashboard/sidebar';
 import { AuthDialog } from '@/components/auth-dialog';
+import { BotCard } from '@/components/dashboard/memoized-cards';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -40,6 +44,7 @@ interface BotInstance {
   username: string;
   server_ip: string;
   server_port: number;
+  offline_mode: boolean;
   status: string;
   node_id: string;
   nodes?: {
@@ -52,12 +57,14 @@ interface BotInstance {
 export default function BotnetPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const { showToast } = useToast();
   
-  const [bots, setBots] = useState<BotInstance[]>([]);
+  // Use optimized Firebase hooks
+  const { botsArray, loading: botsLoading } = useOptimizedFirebaseBots();
+  
   const [nodes, setNodes] = useState<Node[]>([]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [isLoadingBots, setIsLoadingBots] = useState(true);
   const [authDialog, setAuthDialog] = useState<{
     open: boolean;
     code: string;
@@ -79,35 +86,8 @@ export default function BotnetPage() {
     offline_mode: false, // false = online mode (Xbox login required)
   });
 
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push('/login');
-    }
-    if (user) {
-      fetchBots();
-      fetchNodes();
-    }
-  }, [user, loading, router]);
-
-  const fetchBots = async () => {
-    if (!user) return;
-    setIsLoadingBots(true);
-    
-    const { data, error } = await supabase
-      .from('bots')
-      .select('*, nodes(name, location)')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
-    
-    if (error) {
-      console.error('Error fetching bots:', error);
-    } else {
-      setBots(data || []);
-    }
-    setIsLoadingBots(false);
-  };
-
-  const fetchNodes = async () => {
+  // Define fetchNodes before using it in useEffect
+  const fetchNodes = useCallback(async () => {
     try {
       const response = await fetch('/api/nodes/available');
       const data = await response.json();
@@ -118,11 +98,38 @@ export default function BotnetPage() {
     } catch (error) {
       console.error('Error fetching nodes:', error);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push('/login');
+    }
+    if (user) {
+      // Initialize Firebase once
+      initFirebase();
+      
+      // Fetch nodes from API (still needed for available nodes)
+      fetchNodes();
+    }
+  }, [user, loading, router, fetchNodes]);
+
+  // Memoize bots with node info
+  const botsWithNodeInfo = useMemo(() => {
+    return botsArray.map(bot => {
+      const node = nodes.find(n => n.id === bot.node_id);
+      return {
+        ...bot,
+        nodes: node ? {
+          name: node.name,
+          location: node.location,
+        } : undefined,
+      };
+    });
+  }, [botsArray, nodes]);
 
   const handleCreateBot = async () => {
     if (!user || !newBot.username || !newBot.server_ip || !newBot.node_id) {
-      alert('Please fill all fields');
+      showToast('Please fill all fields', 'error');
       return;
     }
     
@@ -130,8 +137,22 @@ export default function BotnetPage() {
     
     try {
       // Get session token
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('No session');
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError) {
+        console.error('[Create Bot] Session error:', sessionError);
+        showToast('Session error. Please try logging in again.', 'error');
+        return;
+      }
+      
+      if (!session) {
+        console.error('[Create Bot] No session found');
+        showToast('No active session. Please log in again.', 'error');
+        router.push('/auth/signin');
+        return;
+      }
+      
+      console.log('[Create Bot] Sending request with token');
       
       const response = await fetch('/api/bots/create', {
         method: 'POST',
@@ -144,98 +165,137 @@ export default function BotnetPage() {
       
       const data = await response.json();
       
+      if (!response.ok) {
+        console.error('[Create Bot] API error:', response.status, data);
+        showToast(`Failed to create bot: ${data.error || 'Unknown error'}`, 'error');
+        return;
+      }
+      
       if (data.success) {
         setIsCreateOpen(false);
         const botUsername = newBot.username;
+        const botId = data.bot?.id;
         setNewBot({ username: '', server_ip: 'donutsmp.net', server_port: 19132, node_id: '', offline_mode: false });
-        fetchBots();
         
-        // Poll command result for auth info (only if online mode)
-        if (!newBot.offline_mode && data.command?.id) {
-          pollCommandResult(data.command.id, botUsername);
+        // Send start command to Firebase
+        const commandId = await sendBotCommand(newBot.node_id, 'start', botId, {
+          username: botUsername,
+          server_ip: newBot.server_ip,
+          server_port: newBot.server_port,
+          offline_mode: newBot.offline_mode,
+        });
+        
+        showToast('Bot created, starting...', 'info', 'ℹ️ Starting');
+        
+        // Listen for command result (auth info or completion)
+        if (!newBot.offline_mode && commandId) {
+          console.log('[Create Bot] Listening for auth result, commandId:', commandId);
+          
+          listenToCommandResult(commandId, (result: any) => {
+            console.log('[Create Bot] Command result received:', result);
+            
+            if (result.status === 'completed' && result.result?.auth) {
+              console.log('[Create Bot] Auth required! Code:', result.result.auth.code);
+              
+              setAuthDialog({
+                open: true,
+                code: result.result.auth.code,
+                link: result.result.auth.link,
+                username: botUsername,
+                commandId: commandId,
+              });
+              
+              showToast('Xbox Login Required!', 'info', '🔐 Auth Required');
+            } else if (result.status === 'completed') {
+              console.log('[Create Bot] Bot started without auth');
+              showToast('Bot started successfully!', 'success', '✅ Success');
+            } else if (result.status === 'failed') {
+              console.log('[Create Bot] Start failed:', result.result?.error);
+              showToast(`Failed: ${result.result?.error || 'Unknown'}`, 'error');
+            }
+          });
         } else {
-          alert('Bot created successfully!');
+          console.log('[Create Bot] Offline mode or no commandId, skipping auth listener');
+          showToast('Bot created successfully!', 'success', '✅ Success');
         }
       } else {
-        alert(`Failed to create bot: ${data.error}`);
+        showToast(`Failed to create bot: ${data.error}`, 'error');
       }
-    } catch (error: any) {
-      alert(`Error: ${error.message}`);
+    } catch (error: unknown) {
+      showToast(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
     } finally {
       setIsLoading(false);
     }
   };
-  
-  const pollCommandResult = async (commandId: string, username: string) => {
-    console.log(`[Auth] Starting poll for command ${commandId}`);
-    let attempts = 0;
-    const maxAttempts = 20; // 20 seconds max
-    let alerted = false;
-    
-    const interval = setInterval(async () => {
-      attempts++;
-      
-      try {
-        const { data: command } = await supabase
-          .from('commands')
-          .select('status, result')
-          .eq('id', commandId)
-          .single();
-        
-        console.log(`[Auth] Poll attempt ${attempts}:`, command);
-        
-        if (command?.status === 'completed' && command?.result?.auth) {
-          clearInterval(interval);
-          console.log('[Auth] Auth info received:', command.result.auth);
-          setAuthDialog({
-            open: true,
-            code: command.result.auth.code,
-            link: command.result.auth.link,
-            username: username,
-            commandId: commandId,
-          });
-        } else if (command?.status === 'completed' || attempts >= maxAttempts) {
-          clearInterval(interval);
-          console.log('[Auth] Polling ended without auth info');
-          if (!alerted) {
-            alerted = true;
-            alert('Bot created successfully!');
-          }
-        }
-      } catch (error) {
-        console.error('Error polling command:', error);
-      }
-    }, 1000);
-  };
 
-  const handleBotCommand = async (botId: string, action: string) => {
+  // Memoized bot command handler
+  const handleBotCommand = useCallback(async (botId: string, action: string) => {
     if (!user) return;
+    
+    try {
+      const bot = botsWithNodeInfo.find(b => b.id === botId);
+      if (!bot) {
+        showToast('Bot not found', 'error');
+        return;
+      }
+      
+      // Send command to Firebase with payload
+      const commandId = await sendBotCommand(bot.node_id, action as 'start' | 'stop' | 'restart', botId, {
+        username: bot.username,
+        server_ip: bot.server_ip,
+        server_port: bot.server_port,
+        offline_mode: bot.offline_mode,
+      });
+      
+      showToast(`Bot ${action} command sent!`, 'success');
+      
+      // Listen for command result
+      listenToCommandResult(commandId!, (result: any) => {
+        if (result.status === 'completed') {
+          showToast(`Bot ${action} completed!`, 'success', '✅ Success');
+        } else if (result.status === 'failed') {
+          showToast(`Bot ${action} failed: ${result.result?.error || 'Unknown'}`, 'error');
+        }
+      });
+    } catch (error: unknown) {
+      showToast(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+    }
+  }, [user, botsWithNodeInfo, showToast]);
+
+  // Memoized delete bot handler
+  const handleDeleteBot = useCallback(async (botId: string) => {
+    if (!user) return;
+    
+    if (!confirm('Are you sure you want to delete this bot?')) {
+      return;
+    }
     
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('No session');
-      
-      const response = await fetch('/api/bots/command', {
+
+      const response = await fetch('/api/bots/delete', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ bot_id: botId, action }),
+        body: JSON.stringify({ bot_id: botId }),
       });
-      
+
       const data = await response.json();
-      
+
       if (data.success) {
-        alert(`Bot ${action} command queued!`);
-        fetchBots();
+        // Clean up Firebase data
+        await deleteBotData(botId);
+        showToast('Bot deleted successfully!', 'success', '✅ Deleted');
       } else {
-        alert(`Failed: ${data.error}`);
+        showToast(`Failed: ${data.error}`, 'error');
       }
-    } catch (error: any) {
-      alert(`Error: ${error.message}`);
+    } catch (error: unknown) {
+      showToast(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
     }
-  };
+  }, [user, showToast]);
 
   if (loading) {
     return (
@@ -265,29 +325,30 @@ export default function BotnetPage() {
         username={authDialog.username}
       />
 
-      <main className="flex-1 ml-[180px]">
-        <div className="p-6">
+      <main className="flex-1 w-full lg:ml-[180px] pt-[60px] lg:pt-0 pb-[80px] lg:pb-0">
+        <div className="p-4 sm:p-6">
           {/* Header */}
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h1 className="text-3xl font-bold">Botnet</h1>
+          <div className="mb-6">
+            <div className="mb-4">
+              <h1 className="text-2xl sm:text-3xl font-bold">Botnet</h1>
               <p className="text-sm text-muted-foreground">
                 Manage your bot instances
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button 
                 variant="outline" 
                 size="sm"
-                onClick={() => fetchBots()}
-                disabled={isLoadingBots}
+                className="w-full sm:w-auto"
+                onClick={() => window.location.reload()}
+                disabled={botsLoading}
               >
-                <RotateCw className={`w-4 h-4 mr-2 ${isLoadingBots ? 'animate-spin' : ''}`} />
+                <RotateCw className={`w-4 h-4 mr-2 ${botsLoading ? 'animate-spin' : ''}`} />
                 Refresh
               </Button>
               <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
                 <DialogTrigger asChild>
-                  <Button className="gap-2">
+                  <Button className="gap-2 w-full sm:w-auto" size="sm">
                     <Plus className="w-4 h-4" />
                     Create Bot
                   </Button>
@@ -376,7 +437,7 @@ export default function BotnetPage() {
           </div>
 
           {/* Bots List */}
-          {isLoadingBots ? (
+          {botsLoading ? (
             // Skeleton Loading
             <div className="space-y-4">
               {[1, 2, 3].map((i) => (
@@ -402,7 +463,7 @@ export default function BotnetPage() {
                 </Card>
               ))}
             </div>
-          ) : bots.length === 0 ? (
+          ) : botsWithNodeInfo.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12">
                 <Bot className="w-12 h-12 text-muted-foreground mb-4" />
@@ -418,90 +479,16 @@ export default function BotnetPage() {
             </Card>
           ) : (
             <div className="space-y-4">
-              {bots.map((bot) => (
-                <Card key={bot.id} className="hover:shadow-md transition">
-                  <CardContent className="flex items-center justify-between p-4">
-                    {/* Left */}
-                    <div className="flex items-center gap-4">
-                      <div className="rounded-lg bg-muted p-2">
-                        <Bot className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <p className="font-semibold leading-tight">{bot.username}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {bot.server_ip}:{bot.server_port}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {bot.nodes?.name || 'Unknown Node'} • {bot.nodes?.location || 'N/A'}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Right - Status & Actions */}
-                    <div className="flex items-center gap-3">
-                      <Badge
-                        variant="secondary"
-                        className={
-                          bot.status === 'running'
-                            ? 'bg-green-600 text-white'
-                            : bot.status === 'starting' || bot.status === 'stopping'
-                            ? 'bg-yellow-600 text-white'
-                            : bot.status === 'error'
-                            ? 'bg-red-500 text-white'
-                            : 'bg-gray-500 text-white'
-                        }
-                      >
-                        {bot.status}
-                      </Badge>
-                      <div className="flex gap-1">
-                        {bot.status === 'stopped' || bot.status === 'error' ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="gap-1"
-                            onClick={() => handleBotCommand(bot.id, 'start')}
-                          >
-                            <Play className="w-3 h-3" />
-                            Start
-                          </Button>
-                        ) : bot.status === 'running' ? (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="gap-1"
-                              onClick={() => handleBotCommand(bot.id, 'stop')}
-                            >
-                              <Square className="w-3 h-3" />
-                              Stop
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="gap-1"
-                              onClick={() => handleBotCommand(bot.id, 'restart')}
-                            >
-                              <RotateCw className="w-3 h-3" />
-                              Restart
-                            </Button>
-                          </>
-                        ) : null}
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          className="gap-1"
-                          onClick={() => {
-                            if (confirm('Delete this bot?')) {
-                              handleBotCommand(bot.id, 'delete');
-                            }
-                          }}
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+              {botsWithNodeInfo.map((bot) => (
+                <BotCard
+                  key={bot.id}
+                  bot={bot}
+                  onStart={() => handleBotCommand(bot.id, 'start')}
+                  onStop={() => handleBotCommand(bot.id, 'stop')}
+                  onRestart={() => handleBotCommand(bot.id, 'restart')}
+                  onDelete={() => handleDeleteBot(bot.id)}
+                  disabled={isLoading}
+                />
               ))}
             </div>
           )}

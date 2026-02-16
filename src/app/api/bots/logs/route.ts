@@ -16,13 +16,41 @@ const supabaseAdmin = createClient(
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { bot_id, log_type, message, metadata, secret_key } = body;
+    const { bot_id, log_type, message, metadata, logs, secret_key } = body;
 
     // Verify node server secret
     if (secret_key !== process.env.NODE_SECRET_KEY) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // Handle batch logs
+    if (logs && Array.isArray(logs) && logs.length > 0) {
+      const logEntries = logs.map(log => ({
+        bot_id,
+        log_type: log.log_type,
+        message: log.message,
+        metadata: log.metadata || {},
+        created_at: log.timestamp || new Date().toISOString(),
+      }));
+
+      const { data, error } = await supabaseAdmin
+        .from("bot_logs")
+        .insert(logEntries)
+        .select();
+
+      if (error) {
+        console.error("Error inserting batch logs:", error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      return NextResponse.json({ 
+        success: true, 
+        count: logEntries.length,
+        logs: data 
+      });
+    }
+
+    // Handle single log (backward compatibility)
     if (!bot_id || !log_type || !message) {
       return NextResponse.json(
         { error: "Missing required fields" },

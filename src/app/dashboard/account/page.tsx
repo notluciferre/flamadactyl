@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/components/ui/toast-notification';
 import { DashboardSidebar } from '@/components/dashboard/sidebar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,6 +17,7 @@ const ADMIN_EMAIL = 'admin@cakranode.tech';
 export default function AccountPage() {
   const { user, loading, signOut } = useAuth();
   const router = useRouter();
+  const { showToast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [profileData, setProfileData] = useState({
     name: '',
@@ -59,12 +61,12 @@ export default function AccountPage() {
   const handleUpdateProfile = () => {
     // TODO: Implement profile update with Supabase
     setIsEditing(false);
-    alert('Profile updated successfully!');
+    showToast('Profile updated successfully!', 'success', '✓ Updated');
   };
 
   const handleChangePassword = () => {
     if (passwordData.newPassword !== passwordData.confirmPassword) {
-      alert('Passwords do not match!');
+      showToast('Passwords do not match!', 'error');
       return;
     }
     // TODO: Implement password change with Supabase
@@ -73,7 +75,7 @@ export default function AccountPage() {
       newPassword: '',
       confirmPassword: '',
     });
-    alert('Password changed successfully!');
+    showToast('Password changed successfully!', 'success', '✓ Updated');
   };
 
   const handleLogout = async () => {
@@ -85,12 +87,12 @@ export default function AccountPage() {
     <div className="flex min-h-screen bg-background">
       <DashboardSidebar />
 
-      <main className="flex-1 ml-[180px]">
-        <div className="p-6 max-w-4xl">
+      <main className="flex-1 w-full lg:ml-[180px] pt-[60px] lg:pt-0 pb-[80px] lg:pb-0">
+        <div className="p-4 sm:p-6 max-w-4xl mx-auto">
           {/* Header */}
           <div className="mb-6">
-            <h1 className="text-3xl font-bold">Account Settings</h1>
-            <p className="text-sm text-muted-foreground">
+            <h1 className="text-2xl sm:text-3xl font-bold">Account Settings</h1>
+            <p className="text-sm text-muted-foreground description">
               Manage your account information and preferences
             </p>
           </div>
@@ -171,18 +173,19 @@ export default function AccountPage() {
                     Email cannot be changed
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-col sm:flex-row gap-2">
                   {!isEditing ? (
-                    <Button className="text-foreground" onClick={() => setIsEditing(true)}>
+                    <Button className="text-foreground w-full sm:w-auto" onClick={() => setIsEditing(true)}>
                       Edit Profile
                     </Button>
                   ) : (
                     <>
-                      <Button className="text-foreground" onClick={handleUpdateProfile}>
+                      <Button className="text-foreground w-full sm:w-auto" onClick={handleUpdateProfile}>
                         Save Changes
                       </Button>
                       <Button
                         variant="outline"
+                        className="w-full sm:w-auto"
                         onClick={() => setIsEditing(false)}
                       >
                         Cancel
@@ -247,7 +250,7 @@ export default function AccountPage() {
                     }
                   />
                 </div>
-                <Button className="text-foreground" onClick={handleChangePassword}>
+                <Button className="text-foreground w-full sm:w-auto" onClick={handleChangePassword}>
                   Update Password
                 </Button>
               </div>

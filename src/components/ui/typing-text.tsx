@@ -58,10 +58,16 @@ const TypingText = ({
   const [isDeleting, setIsDeleting] = useState(false)
   const [currentTextIndex, setCurrentTextIndex] = useState(0)
   const [isVisible, setIsVisible] = useState(!startOnVisible)
+  const [isMounted, setIsMounted] = useState(false)
   const cursorRef = useRef<HTMLSpanElement>(null)
   const containerRef = useRef<HTMLElement>(null)
 
   const textArray = useMemo(() => (Array.isArray(text) ? text : [text]), [text])
+
+  // Prevent hydration mismatch
+  useEffect(() => {
+    setIsMounted(true)
+  }, [])
 
   const getRandomSpeed = useCallback(() => {
     if (!variableSpeed) {
@@ -99,7 +105,12 @@ const TypingText = ({
   }, [startOnVisible])
 
   useEffect(() => {
-    if (showCursor && cursorRef.current) {
+    if (!showCursor || !cursorRef.current || !isMounted) {
+      return
+    }
+    
+    // Ensure GSAP is loaded
+    if (typeof window !== 'undefined') {
       gsap.set(cursorRef.current, { opacity: 1 })
       gsap.to(cursorRef.current, {
         opacity: 0,
@@ -109,10 +120,10 @@ const TypingText = ({
         ease: "power2.inOut",
       })
     }
-  }, [showCursor, cursorBlinkDuration])
+  }, [showCursor, cursorBlinkDuration, isMounted])
 
   useEffect(() => {
-    if (!isVisible) {
+    if (!isVisible || !isMounted) {
       return
     }
 
@@ -177,6 +188,7 @@ const TypingText = ({
     loop,
     initialDelay,
     isVisible,
+    isMounted,
     reverseMode,
     variableSpeed,
     onSentenceComplete,
@@ -191,22 +203,27 @@ const TypingText = ({
     {
       ref: containerRef,
       className: `inline-block whitespace-pre-wrap tracking-tight ${className}`,
+      suppressHydrationWarning: true,
       ...props,
     },
-    <span className="inline" style={{ color: getCurrentTextColor() }}>
-      {displayedText}
-    </span>,
-    showCursor && (
-      <span
-        className={`inline-block opacity-100 ${shouldHideCursor ? "hidden" : ""} ${
-          cursorCharacter === "|"
-            ? `h-5 w-[1px] translate-y-1 bg-foreground ${cursorClassName}`
-            : `ml-1 ${cursorClassName}`
-        }`}
-        ref={cursorRef}
-      >
-        {cursorCharacter === "|" ? "" : cursorCharacter}
-      </span>
+    isMounted && (
+      <>
+        <span className="inline" style={{ color: getCurrentTextColor() }}>
+          {displayedText}
+        </span>
+        {showCursor && (
+          <span
+            className={`inline-block opacity-100 ${shouldHideCursor ? "hidden" : ""} ${
+              cursorCharacter === "|"
+                ? `h-5 w-[1px] translate-y-1 bg-foreground ${cursorClassName}`
+                : `ml-1 ${cursorClassName}`
+            }`}
+            ref={cursorRef}
+          >
+            {cursorCharacter === "|" ? "" : cursorCharacter}
+          </span>
+        )}
+      </>
     ),
   )
 }

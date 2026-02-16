@@ -1,9 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
+import { useToast } from '@/components/ui/toast-notification';
+import { initFirebase } from '@/lib/firebase';
+import { sendBotCommand } from '@/lib/firebase-api';
+import { useOptimizedFirebaseBots } from '@/hooks/useOptimizedFirebase';
 import { DashboardSidebar } from '@/components/dashboard/sidebar';
 import { ConsolePanel } from '@/components/dashboard/console';
 import { CPUChart, RAMChart, NetworkChart } from '@/components/dashboard/charts';
@@ -19,95 +22,57 @@ import {
 export default function DashboardPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
-  const [stats, setStats] = useState({
-    totalBots: 0,
-    onlineBots: 0,
-    uptime: 'N/A',
-    target: 'N/A',
-  });
-  const [bots, setBots] = useState<any[]>([]);
+  const { showToast } = useToast();
+  const { botsArray, stats, loading: botsLoading } = useOptimizedFirebaseBots();
+
+  // Memoized stats calculation
+  const dashboardStats = useMemo(() => {
+    const firstBot = botsArray.find(b => b.status?.status === 'running');
+    return {
+      totalBots: stats.total,
+      onlineBots: stats.online,
+      uptime: 'N/A', // TODO: Calculate from oldest running bot
+      target: firstBot?.server_ip || 'N/A',
+    };
+  }, [botsArray, stats]);
 
   useEffect(() => {
     if (!loading && !user) {
       router.push('/login');
     }
     if (user) {
-      fetchStats();
+      // Initialize Firebase once
+      initFirebase();
     }
   }, [user, loading, router]);
 
-  const fetchStats = async () => {
-    if (!user) return;
-    
-    // Count total bots for this user
-    const { count: totalCount } = await supabase
-      .from('bots')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', user.id);
-    
-    // Count online bots (running status)
-    const { count: onlineCount } = await supabase
-      .from('bots')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', user.id)
-      .eq('status', 'running');
-    
-    // Get all bots for command control
-    const { data: botsData } = await supabase
-      .from('bots')
-      .select('*')
-      .eq('user_id', user.id);
-    
-    setBots(botsData || []);
-    
-    // Get first bot's server IP as target
-    const { data: firstBot } = await supabase
-      .from('bots')
-      .select('server_ip')
-      .eq('user_id', user.id)
-      .limit(1)
-      .single();
-    
-    setStats({
-      totalBots: totalCount || 0,
-      onlineBots: onlineCount || 0,
-      uptime: 'N/A', // TODO: Calculate from oldest running bot
-      target: firstBot?.server_ip || 'N/A',
-    });
-  };
-
-  const handleBulkCommand = async (action: string) => {
-    if (bots.length === 0) {
-      alert('No bots available');
+  // Memoized bulk command handler
+  const handleBulkCommand = useCallback(async (action: string) => {
+    if (botsArray.length === 0) {
+      showToast('No bots available', 'error');
       return;
     }
 
-    const confirmMsg = `${action.charAt(0).toUpperCase() + action.slice(1)} all ${bots.length} bots?`;
+    const confirmMsg = `${action.charAt(0).toUpperCase() + action.slice(1)} all ${botsArray.length} bots?`;
     if (!confirm(confirmMsg)) return;
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('No session');
-
-      // Send command for each bot
-      const promises = bots.map((bot) =>
-        fetch('/api/bots/command', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({ bot_id: bot.id, action }),
-        })
-      );
+      // Send Firebase command for each bot
+      const promises = botsArray.map(async (bot) => {
+        return sendBotCommand(bot.node_id, action as any, bot.id, {
+          username: bot.username,
+          server_ip: bot.server_ip,
+          server_port: bot.server_port,
+          offline_mode: bot.offline_mode !== false,
+        });
+      });
 
       await Promise.all(promises);
-      alert(`${action} command sent to all bots!`);
-      fetchStats();
-    } catch (error: any) {
-      alert(`Error: ${error.message}`);
+      showToast(`${action} command sent to all ${botsArray.length} bots!`, 'success');
+    } catch (error: unknown) {
+      showToast(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
     }
-  };
+  }, [botsArray, showToast]);
 
   if (loading) {
     return (
@@ -128,17 +93,17 @@ export default function DashboardPage() {
     <div className="flex min-h-screen bg-background">
       <DashboardSidebar />
       
-      <main className="flex-1 ml-[180px]">
-        <div className="p-6">
+      <main className="flex-1 w-full lg:ml-[180px] pt-[60px] lg:pt-0 pb-[80px] lg:pb-0">
+        <div className="p-4 sm:p-6">
           {/* Header */}
-          <div className="flex items-center justify-between mb-6">
-            <h1 className="text-3xl font-bold">Command Control</h1>
-            <div className="flex gap-2">
+          <div className="mb-6">
+            <h1 className="text-2xl sm:text-3xl font-bold mb-4">Command Control</h1>
+            <div className="grid grid-cols-3 sm:flex gap-2">
               <Button 
                 size="sm" 
                 className='text-foreground' 
                 onClick={() => handleBulkCommand('start')}
-                disabled={bots.length === 0}
+                disabled={botsArray.length === 0}
               >
                 Start All
               </Button>
@@ -146,7 +111,7 @@ export default function DashboardPage() {
                 size="sm" 
                 className='text-foreground' 
                 onClick={() => handleBulkCommand('restart')}
-                disabled={bots.length === 0}
+                disabled={botsArray.length === 0}
               >
                 Restart All
               </Button>
@@ -154,7 +119,7 @@ export default function DashboardPage() {
                 size="sm" 
                 className='text-foreground' 
                 onClick={() => handleBulkCommand('stop')}
-                disabled={bots.length === 0}
+                disabled={botsArray.length === 0}
               >
                 Stop All
               </Button>
@@ -162,29 +127,29 @@ export default function DashboardPage() {
           </div>
 
           {/* Stats Cards */}
-          <div className="grid grid-cols-4 gap-4 mb-6 text-font-inter">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6 text-font-inter">
             <Card>
               <CardHeader>
                 <CardDescription>Total Bots</CardDescription>
-                <CardTitle>{stats.totalBots}</CardTitle>
+                <CardTitle>{dashboardStats.totalBots}</CardTitle>
               </CardHeader>
             </Card>
             <Card>
               <CardHeader>
                 <CardDescription>Online</CardDescription>
-                <CardTitle>{stats.onlineBots}</CardTitle>
+                <CardTitle>{dashboardStats.onlineBots}</CardTitle>
               </CardHeader>
             </Card>
             <Card>
               <CardHeader>
                 <CardDescription>Uptime</CardDescription>
-                <CardTitle>{stats.uptime}</CardTitle>
+                <CardTitle>{dashboardStats.uptime}</CardTitle>
               </CardHeader>
             </Card>
             <Card>
               <CardHeader>
                 <CardDescription>Target</CardDescription>
-                <CardTitle className="truncate">{stats.target}</CardTitle>
+                <CardTitle className="truncate">{dashboardStats.target}</CardTitle>
               </CardHeader>
             </Card>
           </div>

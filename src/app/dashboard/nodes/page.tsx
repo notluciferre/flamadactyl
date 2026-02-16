@@ -4,11 +4,26 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
+import { initFirebase } from '@/lib/firebase';
+import { listenToNodes } from '@/lib/firebase-api';
+import { useToast } from '@/components/ui/toast-notification';
 import { DashboardSidebar } from '@/components/dashboard/sidebar';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Server, Activity } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Server, Activity, RefreshCw, Plus, Trash2, Copy, Check } from 'lucide-react';
 
 const ADMIN_EMAIL = 'admin@cakranode.tech';
 
@@ -28,8 +43,14 @@ interface NodeWithStats {
 export default function NodesPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const { showToast } = useToast();
   const [nodes, setNodes] = useState<NodeWithStats[]>([]);
   const [isLoadingNodes, setIsLoadingNodes] = useState(true);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [newNode, setNewNode] = useState({ name: '', location: '', ip_address: 'auto' });
+  const [createdToken, setCreatedToken] = useState<string | null>(null);
+  const [tokenCopied, setTokenCopied] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -40,18 +61,119 @@ export default function NodesPage() {
       router.push('/dashboard');
     }
     if (user && user.email === ADMIN_EMAIL) {
+      // Initialize Firebase
+      initFirebase();
+      
+      // Fetch initial nodes from API
       fetchNodes();
       
-      // Auto-refresh every 5 seconds
-      const interval = setInterval(fetchNodes, 5000);
-      return () => clearInterval(interval);
+      // Start real-time Firebase listener for node status
+      const unsubscribe = listenToNodes((nodesData) => {
+        const nodesList = Object.entries(nodesData).map(([id, node]: [string, any]) => ({
+          id,
+          name: node.name || '',
+          location: node.location || '',
+          ip_address: node.ip_address || '',
+          status: node.status?.online ? 'online' : 'offline',
+          last_heartbeat: node.status?.lastUpdate ? new Date(node.status.lastUpdate).toISOString() : null,
+          bot_count: node.status?.stats?.bot_count || 0,
+          cpu_usage: node.status?.stats?.cpu_usage || 0,
+          ram_used: node.status?.stats?.ram_used || 0,
+          ram_total: node.status?.stats?.ram_total || 0,
+        }));
+        setNodes(nodesList);
+        setIsLoadingNodes(false);
+      });
+      
+      return () => unsubscribe();
     }
   }, [user, loading, router]);
+
+  const handleCreateNode = async () => {
+    if (!newNode.name || !newNode.location) {
+      showToast('Please fill all required fields', 'error');
+      return;
+    }
+
+    setIsCreating(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('No session');
+
+      const response = await fetch('/api/nodes/create', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify(newNode),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setCreatedToken(data.node.access_token);
+        setNewNode({ name: '', location: '', ip_address: 'auto' });
+        showToast('Node created successfully!', 'success', '✅ Success');
+        fetchNodes();
+      } else {
+        showToast(`Failed: ${data.error}`, 'error');
+      }
+    } catch (error: any) {
+      showToast(`Error: ${error.message}`, 'error');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleDeleteNode = async (nodeId: string, nodeName: string) => {
+    if (!confirm(`Are you sure you want to delete node "${nodeName}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('No session');
+
+      const response = await fetch('/api/nodes/delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ node_id: nodeId }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        showToast('Node deleted successfully!', 'success', '✅ Deleted');
+        fetchNodes();
+      } else {
+        showToast(`Failed: ${data.error}`, 'error');
+      }
+    } catch (error: any) {
+      showToast(`Error: ${error.message}`, 'error');
+    }
+  };
+
+  const copyToken = () => {
+    if (createdToken) {
+      navigator.clipboard.writeText(createdToken);
+      setTokenCopied(true);
+      setTimeout(() => setTokenCopied(false), 2000);
+    }
+  };
+
 
   const fetchNodes = async () => {
     if (!user) return;
     
-    setIsLoadingNodes(true);
+    // Only show loading skeleton on initial load
+    if (nodes.length === 0) {
+      setIsLoadingNodes(true);
+    }
+    
     try {
       // Get session token
       const { data: { session } } = await supabase.auth.getSession();
@@ -113,15 +235,111 @@ export default function NodesPage() {
     <div className="flex min-h-screen bg-background">
       <DashboardSidebar />
 
-      <main className="flex-1 ml-[180px]">
-        <div className="p-6">
+      <main className="flex-1 w-full lg:ml-[180px] pt-[60px] lg:pt-0 pb-[80px] lg:pb-0">
+        <div className="p-4 sm:p-6">
           {/* Header */}
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h1 className="text-3xl font-bold">Node Management</h1>
-              <p className="text-sm text-muted-foreground">
+          <div className="mb-6">
+            <div className="mb-4">
+              <h1 className="text-2xl sm:text-3xl font-bold">Node Management</h1>
+              <p className="text-sm text-muted-foreground description">
                 Monitor your hosting nodes across multiple locations
               </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={() => window.location.reload()}
+                variant="outline"
+                size="sm"
+                className="w-full sm:w-auto"
+                disabled={isLoadingNodes}
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${isLoadingNodes ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+              <Dialog open={isCreateOpen} onOpenChange={(open) => {
+                setIsCreateOpen(open);
+                if (!open) setCreatedToken(null);
+              }}>
+                <DialogTrigger asChild>
+                  <Button size="sm" className="w-full sm:w-auto">
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Node
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Create New Node</DialogTitle>
+                    <DialogDescription>
+                      {createdToken ? 
+                        'Node created! Copy the access token - it will not be shown again.' :
+                        'Add a new node server to your network'
+                      }
+                    </DialogDescription>
+                  </DialogHeader>
+                  {createdToken ? (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Access Token</Label>
+                        <div className="flex gap-2">
+                          <Input value={createdToken} readOnly className="font-mono text-sm" />
+                          <Button onClick={copyToken} size="icon" variant="outline">
+                            {tokenCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Save this token securely. You'll need it to configure the node server.
+                        </p>
+                      </div>
+                      <DialogFooter>
+                        <Button onClick={() => {
+                          setIsCreateOpen(false);
+                          setCreatedToken(null);
+                        }}>
+                          Done
+                        </Button>
+                      </DialogFooter>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="name">Node Name *</Label>
+                        <Input
+                          id="name"
+                          placeholder="SG-Node-1"
+                          value={newNode.name}
+                          onChange={(e) => setNewNode({ ...newNode, name: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="location">Location *</Label>
+                        <Input
+                          id="location"
+                          placeholder="Singapore"
+                          value={newNode.location}
+                          onChange={(e) => setNewNode({ ...newNode, location: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="ip">IP Address</Label>
+                        <Input
+                          id="ip"
+                          placeholder="auto (recommended)"
+                          value={newNode.ip_address}
+                          onChange={(e) => setNewNode({ ...newNode, ip_address: e.target.value })}
+                        />
+                      </div>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
+                          Cancel
+                        </Button>
+                        <Button onClick={handleCreateNode} disabled={isCreating}>
+                          {isCreating ? 'Creating...' : 'Create Node'}
+                        </Button>
+                      </DialogFooter>
+                    </div>
+                  )}
+                </DialogContent>
+              </Dialog>
             </div>
           </div>
 
@@ -157,13 +375,13 @@ export default function NodesPage() {
               <CardContent className="flex flex-col items-center justify-center py-12">
                 <Server className="w-12 h-12 text-muted-foreground mb-4" />
                 <h3 className="text-lg font-semibold mb-2">No nodes connected</h3>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-muted-foreground description">
                   Start a node server to see it here
                 </p>
               </CardContent>
             </Card>
           ) : (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {nodes.map((node) => (
                 <Card key={node.id} className="relative">
                   <CardContent className="p-6">
@@ -215,6 +433,18 @@ export default function NodesPage() {
                           </span>
                         </div>
                       )}
+                    </div>
+
+                    <div className="pt-4 border-t">
+                      <Button
+                        onClick={() => handleDeleteNode(node.id, node.name)}
+                        variant="destructive"
+                        size="sm"
+                        className="w-full"
+                      >
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        Delete Node
+                      </Button>
                     </div>
                   </CardContent>
                 </Card>

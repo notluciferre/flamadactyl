@@ -1,30 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { verifyUser } from '@/lib/auth-helpers';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 export async function POST(request: NextRequest) {
   try {
     // Get user from auth header
     const authHeader = request.headers.get('authorization');
+    console.log('[CREATE BOT API] Auth header present:', !!authHeader);
+    
     if (!authHeader) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      console.error('[CREATE BOT API] No authorization header');
+      return NextResponse.json({ error: 'No authorization header provided' }, { status: 401 });
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const supabase = createClient(supabaseUrl, supabaseKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    
+    // Verify user with retry logic
+    const { authenticated, userId, error: authError } = await verifyUser(token);
+    if (!authenticated || !userId) {
+      console.error('[CREATE BOT API] User verification failed:', authError);
+      return NextResponse.json({ 
+        error: authError || 'Authentication failed' 
+      }, { status: 401 });
     }
+    
+    console.log('[CREATE BOT API] User authenticated:', userId);
+
+    // Create service client for database operations
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const body = await request.json();
     const { node_id, username, server_ip, server_port, auto_reconnect, offline_mode } = body;
@@ -41,7 +48,7 @@ export async function POST(request: NextRequest) {
     const { data: existingBot } = await supabase
       .from('bots')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .eq('node_id', node_id)
       .eq('username', username)
       .eq('server_ip', server_ip)
@@ -58,6 +65,7 @@ export async function POST(request: NextRequest) {
           auto_reconnect: auto_reconnect !== false,
           enabled: true,
           status: 'stopped',
+          offline_mode: offline_mode !== false,
           metadata: {
             offline_mode: offline_mode !== false,
           },
@@ -73,7 +81,7 @@ export async function POST(request: NextRequest) {
       const { data: newBot, error: botError } = await supabase
         .from('bots')
         .insert({
-          user_id: user.id,
+          user_id: userId,
           node_id,
           username,
           server_ip,
@@ -81,6 +89,7 @@ export async function POST(request: NextRequest) {
           auto_reconnect: auto_reconnect !== false,
           status: 'stopped',
           enabled: true,
+          offline_mode: offline_mode !== false,
           metadata: {
             offline_mode: offline_mode !== false,
           },
@@ -90,14 +99,14 @@ export async function POST(request: NextRequest) {
 
       if (botError) throw botError;
       bot = newBot;
-      console.log('[CREATE BOT] New bot created:', { bot_id: newBot.id, username, user_id: user.id });
+      console.log('[CREATE BOT] New bot created:', { bot_id: newBot.id, username, user_id: userId });
     }
 
     // Create command to start the bot
     const { data: command, error: cmdError } = await supabase
       .from('commands')
       .insert({
-        user_id: user.id,
+        user_id: userId,
         node_id,
         bot_id: bot.id,
         action: 'create',

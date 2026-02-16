@@ -9,7 +9,7 @@ export function LandingPage() {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <Navbar 
-        name="CakraNode"
+        name="Flamahost"
         homeUrl="/"
         showNavigation={false}
         mobileLinks={[
@@ -24,20 +24,22 @@ export function LandingPage() {
       />
 
       {/* Hero Section */}
-      <section className="container mx-auto px-4 py-12 md:py-16">
-        <div className="grid lg:grid-cols-2 gap-12 items-center">
-          <div className="space-y-8">
+      <section className="container mx-auto px-4 sm:px-6 lg:px-8 py-16 md:py-20 lg:py-24">
+        <div className="grid lg:grid-cols-2 gap-8 lg:gap-12 items-center">
+          <div className="space-y-6 md:space-y-8">
             
-            <h1 className="font-extrabold text-2xl md:text-2xl lg:text-6xl leading-tight">
+            <h1 className="font-extrabold text-4xl sm:text-5xl md:text-5xl lg:text-6xl leading-tight">
             <span  className="text-foreground">Helping you make</span>{" "}
+            <br/>
             <TypingText
                 as="span"
                 text={["Powerful", "Effective"]}
                 typingSpeed={80}
                 pauseDuration={1200}
                 className="font-extrabold tracking-tight"
+                suppressHydrationWarning
             />{" "}
-            <p className="text-primary">Bots</p>
+            <span className="text-primary">Bots</span>
             </h1>
 
             <div className="flex flex-col sm:flex-row gap-4">

@@ -33,9 +33,14 @@ export interface Bot {
   username: string;
   server_ip: string;
   server_port: number;
-  status: 'running' | 'stopped' | 'error' | 'starting' | 'stopping';
+  status: {
+    status: 'running' | 'stopped' | 'error' | 'starting' | 'stopping' | 'deleted';
+    error: string | null;
+    timestamp: number;
+  };
   auto_reconnect: boolean;
   enabled: boolean;
+  offline_mode: boolean;
   metadata: Record<string, any>;
   created_at: string;
   updated_at: string;
@@ -95,6 +100,7 @@ export interface CreateBotRequest {
   server_ip: string;
   server_port?: number;
   auto_reconnect?: boolean;
+  offline_mode?: boolean;
 }
 
 export interface BotCommandRequest {

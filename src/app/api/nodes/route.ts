@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 import { createClient } from '@supabase/supabase-js';
+import { verifyAdmin } from '@/lib/auth-helpers';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-const ADMIN_EMAIL = 'admin@cakranode.tech';
 
 export async function GET(request: NextRequest) {
   try {
@@ -16,17 +15,14 @@ export async function GET(request: NextRequest) {
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const supabase = createClient(supabaseUrl, supabaseKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user || user.email !== ADMIN_EMAIL) {
-      return NextResponse.json({ error: 'Unauthorized - Admin only' }, { status: 401 });
+    
+    // Verify admin with retry logic
+    const { isAdmin, error: authError } = await verifyAdmin(token);
+    if (!isAdmin) {
+      console.error('[Nodes List] Admin verification failed:', authError);
+      return NextResponse.json({ 
+        error: authError || 'Unauthorized - Admin only' 
+      }, { status: 401 });
     }
 
     // Fetch all nodes (bypass RLS with admin client)

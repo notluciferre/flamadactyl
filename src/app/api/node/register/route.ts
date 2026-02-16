@@ -1,69 +1,51 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-admin';
 
-const NODE_SECRET_KEY = process.env.NODE_SECRET_KEY || 'cakranode-secret-2026';
-
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { name, location, ip_address, secret_key } = body;
+    const { access_token, ip_address } = body;
 
-    // Validate secret key
-    if (secret_key !== NODE_SECRET_KEY) {
+    // Validate access token
+    if (!access_token) {
       return NextResponse.json(
-        { error: 'Invalid secret key' },
+        { error: 'Access token required' },
         { status: 401 }
       );
     }
 
     // Validate required fields
-    if (!name || !location || !ip_address) {
+    if (!ip_address) {
       return NextResponse.json(
-        { error: 'Missing required fields: name, location, ip_address' },
+        { error: 'IP address required' },
         { status: 400 }
       );
     }
 
-    // Check if node already exists with same IP
-    const { data: existingNode } = await supabaseAdmin
+    // Find node with matching access token
+    const { data: nodes, error: findError } = await supabaseAdmin
       .from('nodes')
-      .select('id')
-      .eq('ip_address', ip_address)
-      .single();
+      .select('*')
+      .eq('metadata->>access_token', access_token);
 
-    if (existingNode) {
-      // Update existing node
-      const { data, error } = await supabaseAdmin
-        .from('nodes')
-        .update({
-          name,
-          location,
-          status: 'online',
-          last_heartbeat: new Date().toISOString(),
-        })
-        .eq('id', existingNode.id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      return NextResponse.json({
-        success: true,
-        node: data,
-        message: 'Node updated successfully',
-      });
+    if (findError || !nodes || nodes.length === 0) {
+      return NextResponse.json(
+        { error: 'Invalid access token' },
+        { status: 401 }
+      );
     }
 
-    // Create new node
+    const node = nodes[0];
+
+    // Update node status and IP
     const { data, error } = await supabaseAdmin
       .from('nodes')
-      .insert({
-        name,
-        location,
-        ip_address,
+      .update({
+        ip_address: ip_address === 'auto' ? node.ip_address : ip_address,
         status: 'online',
         last_heartbeat: new Date().toISOString(),
       })
+      .eq('id', node.id)
       .select()
       .single();
 

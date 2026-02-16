@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { initFirebase } from '@/lib/firebase';
+import { sendBotCommand } from '@/lib/firebase-api';
+import { verifyUser } from '@/lib/auth-helpers';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 export async function POST(request: NextRequest) {
   try {
+    // Initialize Firebase for this request
+    initFirebase();
+    
     // Get user from auth header
     const authHeader = request.headers.get('authorization');
     if (!authHeader) {
@@ -13,18 +19,19 @@ export async function POST(request: NextRequest) {
     }
 
     const token = authHeader.replace('Bearer ', '');
+    
+    // Verify user with retry logic
+    const { authenticated, userId, error: authError } = await verifyUser(token);
+    if (!authenticated || !userId) {
+      console.error('[Bot Command] User verification failed:', authError);
+      return NextResponse.json({ 
+        error: authError || 'Unauthorized' 
+      }, { status: 401 });
+    }
+
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
 
     const body = await request.json();
     const { bot_id, action, command: execCommand } = body;
@@ -51,7 +58,7 @@ export async function POST(request: NextRequest) {
       .from('bots')
       .select('*')
       .eq('id', bot_id)
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .single();
 
     if (botError || !bot) {
@@ -69,25 +76,13 @@ export async function POST(request: NextRequest) {
       payload.server_ip = bot.server_ip;
       payload.server_port = bot.server_port;
       payload.auto_reconnect = bot.metadata?.auto_reconnect ?? true;
-      payload.offline_mode = bot.metadata?.offline_mode ?? false;
+      payload.offline_mode = bot.offline_mode !== false;
     } else if (action === 'exec' && execCommand) {
       payload.command = execCommand;
     }
 
-    // Create command
-    const { data: command, error: cmdError } = await supabase
-      .from('commands')
-      .insert({
-        user_id: user.id,
-        node_id: bot.node_id,
-        bot_id: bot.id,
-        action,
-        payload,
-      })
-      .select()
-      .single();
-
-    if (cmdError) throw cmdError;
+    // Send command to Firebase (real-time to node server)
+    await sendBotCommand(bot.node_id, action, bot.id, payload);
 
     // Update bot status if starting/stopping
     if (action === 'start') {
@@ -104,8 +99,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      command,
-      message: `Bot ${action} command queued successfully`,
+      message: `Bot ${action} command sent successfully`,
     });
   } catch (error: any) {
     console.error('Bot command error:', error);

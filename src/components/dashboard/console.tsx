@@ -4,6 +4,9 @@ import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
+import { initFirebase } from '@/lib/firebase';
+import { listenToBots, listenToBotLogs } from '@/lib/firebase-api';
+import { Trash2, ChevronsDown } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -16,13 +19,6 @@ interface Bot {
   id: string;
   username: string;
   status: string;
-}
-
-interface BotLog {
-  id: string;
-  log_type: string;
-  message: string;
-  created_at: string;
 }
 
 export function ConsolePanel() {
@@ -38,7 +34,28 @@ export function ConsolePanel() {
 
   useEffect(() => {
     if (user) {
-      fetchBots();
+      // Initialize Firebase
+      initFirebase();
+      
+      // Listen to bots from Firebase
+      const unsubscribe = listenToBots((botsData: Record<string, any>) => {
+        const botsList = Object.entries(botsData)
+          .filter(([id, bot]: [string, any]) => {
+            // Filter out deleted bots
+            const status = bot.status?.status || 'stopped';
+            return status !== 'deleted';
+          })
+          .map(([id, bot]: [string, any]) => ({
+            id,
+            username: bot.username || '',
+            status: bot.status?.status || 'stopped',
+          }));
+        setBots(botsList);
+      });
+      
+      return () => {
+        if (unsubscribe) unsubscribe();
+      };
     }
   }, [user]);
 
@@ -54,76 +71,46 @@ export function ConsolePanel() {
     }
   }, [logs]);
 
-  // Fetch logs when bot is selected
+  // Listen to logs when bot is selected
   useEffect(() => {
     if (selectedBotId && bots.length > 0) {
-      fetchLogs();
-      // Poll for new logs every 2 seconds
-      const interval = setInterval(fetchLogs, 2000);
-      return () => clearInterval(interval);
+      const selectedBot = bots.find(b => b.id === selectedBotId);
+      if (selectedBot) {
+        setLogs([`[System] Listening to ${selectedBot.username}...`]);
+      }
+      
+      // Listen to Firebase real-time logs
+      const unsubscribe = listenToBotLogs(selectedBotId, (log) => {
+        let timestamp = 'Unknown';
+        try {
+          if (log.created_at) {
+            timestamp = new Date(log.created_at).toLocaleTimeString();
+          }
+        } catch (e) {
+          timestamp = new Date().toLocaleTimeString();
+        }
+        const logLine = `[${timestamp}] [${log.log_type.toUpperCase()}] ${log.message}`;
+        setLogs(prev => [...prev, logLine]);
+      });
+      
+      return () => {
+        if (unsubscribe) unsubscribe();
+      };
     }
   }, [selectedBotId, bots]);
-
-  const fetchBots = async () => {
-    if (!user) return;
-    
-    const { data } = await supabase
-      .from('bots')
-      .select('id, username, status')
-      .eq('user_id', user.id)
-      .order('username');
-    
-    if (data) {
-      setBots(data);
-    }
-  };
-
-  const fetchLogs = async () => {
-    if (!selectedBotId || bots.length === 0) return;
-
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-
-      const response = await fetch(`/api/bots/logs/${selectedBotId}`, {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-        },
-      });
-
-      const data = await response.json();
-      
-      console.log('Fetched logs:', data); // Debug log
-      
-      if (data.success && data.logs && data.logs.length > 0) {
-        const selectedBot = bots.find((b) => b.id === selectedBotId);
-        const formattedLogs = data.logs.map((log: BotLog) => {
-          const time = new Date(log.created_at).toLocaleTimeString();
-          return `[${time}] [${selectedBot?.username}] ${log.message}`;
-        });
-        
-        setLogs([
-          '[System] Console ready. Select a bot and enter commands.',
-          ...formattedLogs,
-        ]);
-      }
-    } catch (error) {
-      console.error('Error fetching logs:', error);
-    }
-  };
 
   const handleCommand = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!command.trim() || !selectedBotId) {
       if (!selectedBotId) {
-        setLogs([...logs, '[Error] Please select a bot first']);
+        setLogs(prev => [...prev, '[Error] Please select a bot first']);
       }
       return;
     }
 
     const selectedBot = bots.find((b) => b.id === selectedBotId);
     const cmdLog = `[${selectedBot?.username}] > ${command}`;
-    setLogs([...logs, cmdLog]);
+    setLogs(prev => [...prev, cmdLog]);
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -156,6 +143,44 @@ export function ConsolePanel() {
     setCommand('');
   };
 
+  const clearLogs = () => {
+    (async () => {
+      const selectedBot = bots.find((b) => b.id === selectedBotId);
+      try {
+        if (selectedBotId) {
+          const { data: { session } } = await supabase.auth.getSession();
+          const resp = await fetch(`/api/bots/logs/${selectedBotId}`, {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${session?.access_token}`,
+            },
+          });
+
+          if (!resp.ok) {
+            const body = await resp.json().catch(() => ({}));
+            setLogs(prev => [...prev, `[Error] Failed to clear logs: ${body.error || resp.statusText}`]);
+            return;
+          }
+        }
+
+        if (selectedBot) {
+          setLogs([`[System] Listening to ${selectedBot.username}...`]);
+        } else {
+          setLogs(['[System] Console ready. Select a bot and enter commands.']);
+        }
+      } catch (err: any) {
+        setLogs(prev => [...prev, `[Error] ${err?.message || String(err)}`]);
+      }
+    })();
+  };
+
+  const scrollToBottom = () => {
+    if (consoleRef.current) {
+      consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
+    }
+  };
+
   return (
     <div className="bg-black/50 rounded-lg overflow-hidden border border-border">
       <div className="border-b border-border p-3 flex items-center gap-3">
@@ -175,6 +200,26 @@ export function ConsolePanel() {
         <span className="text-xs text-muted-foreground">
           {bots.filter((b) => b.status === 'running').length} online
         </span>
+        <div className="ml-auto flex gap-2">
+          <Button 
+            size="sm" 
+            variant="outline"
+            onClick={scrollToBottom}
+            className="h-8"
+            title="Scroll to bottom"
+          >
+            <ChevronsDown className="h-4 w-4" />
+          </Button>
+          <Button 
+            size="sm" 
+            variant="outline"
+            onClick={clearLogs}
+            className="h-8"
+            title="Clear logs"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
       <div ref={consoleRef} className="h-80 overflow-y-auto p-4 font-mono text-sm">
         {logs.map((log, i) => (
