@@ -41,7 +41,7 @@ logs/
 venv/
 
 # Agent runtime files
-.agents/
+.agents/skills/
 
 # OS files
 .DS_Store
