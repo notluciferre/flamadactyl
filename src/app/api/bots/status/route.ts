@@ -1,5 +1,6 @@
+export const runtime = 'nodejs';
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase-admin';
+import { updateBot } from '@/lib/rtdb-admin';
 
 const NODE_SECRET_KEY = process.env.NODE_SECRET_KEY || 'cakranode-secret-2026';
 
@@ -24,16 +25,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Update bot status
-    const updateData: any = { status };
+    const updateData: any = { status, updated_at: Date.now() };
     
     if (botError) {
-      updateData.metadata = { error: botError };
+      updateData.error_message = botError;
     }
 
-    const { error: updateError } = await supabaseAdmin
-      .from('bots')
-      .update(updateData)
-      .eq('id', bot_id);
+    const { error: updateError } = await updateBot(bot_id, updateData);
 
     if (updateError) {
       console.error('[STATUS UPDATE] Error:', updateError);
@@ -47,7 +45,7 @@ export async function POST(request: NextRequest) {
       message: 'Bot status updated',
     });
   } catch (error: any) {
-    console.error('Update bot status error:', error);
+    console.error('[UPDATE BOT STATUS] Error:', error);
     return NextResponse.json(
       { error: error.message || 'Failed to update bot status' },
       { status: 500 }

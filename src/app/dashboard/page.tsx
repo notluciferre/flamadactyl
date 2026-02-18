@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/components/ui/toast-notification';
 import { initFirebase } from '@/lib/firebase';
-import { sendBotCommand } from '@/lib/firebase-api';
 import { useOptimizedFirebaseBots } from '@/hooks/useOptimizedFirebase';
 import { DashboardSidebar } from '@/components/dashboard/sidebar';
 import { ConsolePanel } from '@/components/dashboard/console';
@@ -48,6 +47,11 @@ export default function DashboardPage() {
 
   // Memoized bulk command handler
   const handleBulkCommand = useCallback(async (action: string) => {
+    if (!user) {
+      showToast('Not authenticated', 'error');
+      return;
+    }
+
     if (botsArray.length === 0) {
       showToast('No bots available', 'error');
       return;
@@ -57,13 +61,23 @@ export default function DashboardPage() {
     if (!confirm(confirmMsg)) return;
 
     try {
-      // Send Firebase command for each bot
+      // Get Firebase ID token
+      const idToken = await user.getIdToken();
+      if (!idToken) throw new Error('Not authenticated');
+
+      // Send REST API command for each bot
       const promises = botsArray.map(async (bot) => {
-        return sendBotCommand(bot.node_id, action as any, bot.id, {
-          username: bot.username,
-          server_ip: bot.server_ip,
-          server_port: bot.server_port,
-          offline_mode: bot.offline_mode !== false,
+        return fetch('/api/bots/command', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            bot_id: bot.id,
+            action,
+            command: null,
+          }),
         });
       });
 
@@ -72,7 +86,7 @@ export default function DashboardPage() {
     } catch (error: unknown) {
       showToast(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
     }
-  }, [botsArray, showToast]);
+  }, [user, botsArray, showToast]);
 
   if (loading) {
     return (

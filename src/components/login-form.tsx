@@ -1,8 +1,9 @@
-'use client';
+"use client";
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import { getFirebaseAuth } from '@/lib/firebase';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
@@ -37,19 +38,27 @@ export function LoginForm({
     setLoading(true);
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        setError(error.message);
-      } else if (data.session) {
-        // Session automatically saved by Supabase
+      const auth = getFirebaseAuth();
+      if (!auth) {
+        throw new Error('Firebase Auth not initialized. Please check your configuration.');
+      }
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      
+      if (cred?.user) {
+        // Check if email is verified
+        if (!cred.user.emailVerified) {
+          // Sign out the user
+          await auth.signOut();
+          setError('Please verify your email before logging in. Check your inbox for the verification link.');
+          setLoading(false);
+          return;
+        }
+        
         router.push('/dashboard');
       }
-    } catch (err) {
-      setError('Network error. Please try again.');
+    } catch (err: any) {
+      console.error('[Login] Error:', err);
+      setError(err?.message || 'Network error. Please try again.');
     } finally {
       setLoading(false);
     }

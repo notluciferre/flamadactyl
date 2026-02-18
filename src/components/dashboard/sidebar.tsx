@@ -13,7 +13,7 @@ import {
   User,
 } from 'lucide-react';
 
-const ADMIN_EMAIL = 'admin@cakranode.tech';
+const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'admin@cakranode.tech').replace(/"/g, '');
 
 const sidebarItems = [
   { icon: SquareTerminal, label: 'Control', href: '/dashboard' },

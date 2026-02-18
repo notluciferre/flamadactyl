@@ -3,11 +3,10 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
 import { useToast } from '@/components/ui/toast-notification';
 import { initFirebase } from '@/lib/firebase';
-import { sendBotCommand, listenToCommandResult, deleteBotData } from '@/lib/firebase-api';
-import { useOptimizedFirebaseBots } from '@/hooks/useOptimizedFirebase';
+import { listenToCommandResult, deleteBotData } from '@/lib/firebase-api';
+import { useOptimizedFirebaseBots, useOptimizedFirebaseNodes } from '@/hooks/useOptimizedFirebase';
 import { DashboardSidebar } from '@/components/dashboard/sidebar';
 import { AuthDialog } from '@/components/auth-dialog';
 import { BotCard } from '@/components/dashboard/memoized-cards';
@@ -32,37 +31,16 @@ import {
 } from '@/components/ui/select';
 import { Bot, Plus, Play, Square, RotateCw, Trash2 } from 'lucide-react';
 
-interface Node {
-  id: string;
-  name: string;
-  location: string;
-  status: string;
-}
-
-interface BotInstance {
-  id: string;
-  username: string;
-  server_ip: string;
-  server_port: number;
-  offline_mode: boolean;
-  status: string;
-  node_id: string;
-  nodes?: {
-    name: string;
-    location: string;
-  };
-}
-
 
 export default function BotnetPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const { showToast } = useToast();
   
-  // Use optimized Firebase hooks
+  // Use optimized Firebase hooks for real-time data
   const { botsArray, loading: botsLoading } = useOptimizedFirebaseBots();
+  const { nodesArray, loading: nodesLoading } = useOptimizedFirebaseNodes();
   
-  const [nodes, setNodes] = useState<Node[]>([]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [authDialog, setAuthDialog] = useState<{
@@ -86,20 +64,6 @@ export default function BotnetPage() {
     offline_mode: false, // false = online mode (Xbox login required)
   });
 
-  // Define fetchNodes before using it in useEffect
-  const fetchNodes = useCallback(async () => {
-    try {
-      const response = await fetch('/api/nodes/available');
-      const data = await response.json();
-      
-      if (data.success) {
-        setNodes(data.nodes);
-      }
-    } catch (error) {
-      console.error('Error fetching nodes:', error);
-    }
-  }, []);
-
   useEffect(() => {
     if (!loading && !user) {
       router.push('/login');
@@ -107,16 +71,31 @@ export default function BotnetPage() {
     if (user) {
       // Initialize Firebase once
       initFirebase();
-      
-      // Fetch nodes from API (still needed for available nodes)
-      fetchNodes();
     }
-  }, [user, loading, router, fetchNodes]);
+  }, [user, loading, router]);
 
   // Memoize bots with node info
   const botsWithNodeInfo = useMemo(() => {
+    console.log('[Botnet] Mapping bots to nodes:', {
+      botsCount: botsArray.length,
+      nodesCount: nodesArray.length,
+      nodesLoading,
+      bots: botsArray.map(b => ({ id: b.id, username: b.username, node_id: b.node_id })),
+      nodes: nodesArray.map(n => ({ id: n.id, name: n.name })),
+    });
+    
+    // If nodes are still loading and we have bots, wait for nodes
+    if (nodesLoading && botsArray.length > 0 && nodesArray.length === 0) {
+      console.log('[Botnet] Nodes still loading, returning bots without node info...');
+    }
+    
     return botsArray.map(bot => {
-      const node = nodes.find(n => n.id === bot.node_id);
+      const node = nodesArray.find(n => n.id === bot.node_id);
+      
+      if (!node && !nodesLoading) {
+        console.warn(`[Botnet] No node found for bot ${bot.username} with node_id: ${bot.node_id}`);
+      }
+      
       return {
         ...bot,
         nodes: node ? {
@@ -125,7 +104,7 @@ export default function BotnetPage() {
         } : undefined,
       };
     });
-  }, [botsArray, nodes]);
+  }, [botsArray, nodesArray, nodesLoading]);
 
   const handleCreateBot = async () => {
     if (!user || !newBot.username || !newBot.server_ip || !newBot.node_id) {
@@ -136,29 +115,23 @@ export default function BotnetPage() {
     setIsLoading(true);
     
     try {
-      // Get session token
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      // Get Firebase ID token
+      const idToken = await user.getIdToken();
       
-      if (sessionError) {
-        console.error('[Create Bot] Session error:', sessionError);
-        showToast('Session error. Please try logging in again.', 'error');
+      if (!idToken) {
+        console.error('[Create Bot] No ID token');
+        showToast('Authentication failed. Please log in again.', 'error');
+        router.push('/login');
         return;
       }
       
-      if (!session) {
-        console.error('[Create Bot] No session found');
-        showToast('No active session. Please log in again.', 'error');
-        router.push('/auth/signin');
-        return;
-      }
-      
-      console.log('[Create Bot] Sending request with token');
+      console.log('[Create Bot] Sending request with Firebase token');
       
       const response = await fetch('/api/bots/create', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify(newBot),
       });
@@ -177,15 +150,24 @@ export default function BotnetPage() {
         const botId = data.bot?.id;
         setNewBot({ username: '', server_ip: 'donutsmp.net', server_port: 19132, node_id: '', offline_mode: false });
         
-        // Send start command to Firebase
-        const commandId = await sendBotCommand(newBot.node_id, 'start', botId, {
-          username: botUsername,
-          server_ip: newBot.server_ip,
-          server_port: newBot.server_port,
-          offline_mode: newBot.offline_mode,
+        showToast('Bot created, starting...', 'info', 'ℹ️ Starting');
+        
+        // Send start command via REST API
+        const startResponse = await fetch('/api/bots/command', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            bot_id: botId,
+            action: 'start',
+            command: null,
+          }),
         });
         
-        showToast('Bot created, starting...', 'info', 'ℹ️ Starting');
+        const startData = await startResponse.json();
+        const commandId = startData.command_id;
         
         // Listen for command result (auth info or completion)
         if (!newBot.offline_mode && commandId) {
@@ -239,24 +221,29 @@ export default function BotnetPage() {
         return;
       }
       
-      // Send command to Firebase with payload
-      const commandId = await sendBotCommand(bot.node_id, action as 'start' | 'stop' | 'restart', botId, {
-        username: bot.username,
-        server_ip: bot.server_ip,
-        server_port: bot.server_port,
-        offline_mode: bot.offline_mode,
+      // Get Firebase ID token for authentication
+      const idToken = await user.getIdToken();
+      
+      // Send command via REST API
+      const response = await fetch('/api/bots/command', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          bot_id: botId,
+          action: action as 'start' | 'stop' | 'restart',
+          command: null,
+        }),
       });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to send command');
+      }
       
       showToast(`Bot ${action} command sent!`, 'success');
-      
-      // Listen for command result
-      listenToCommandResult(commandId!, (result: any) => {
-        if (result.status === 'completed') {
-          showToast(`Bot ${action} completed!`, 'success', '✅ Success');
-        } else if (result.status === 'failed') {
-          showToast(`Bot ${action} failed: ${result.result?.error || 'Unknown'}`, 'error');
-        }
-      });
     } catch (error: unknown) {
       showToast(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
     }
@@ -271,14 +258,18 @@ export default function BotnetPage() {
     }
     
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('No session');
+      // Get Firebase ID token
+      const idToken = await user.getIdToken();
+      if (!idToken) {
+        showToast('Authentication failed. Please log in again.', 'error');
+        return;
+      }
 
       const response = await fetch('/api/bots/delete', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify({ bot_id: botId }),
       });
@@ -396,11 +387,16 @@ export default function BotnetPage() {
                         <SelectValue placeholder="Select a node" />
                       </SelectTrigger>
                       <SelectContent>
-                        {nodes.map((node) => (
+                        {nodesArray.filter(node => node.status === 'online').map((node) => (
                           <SelectItem key={node.id} value={node.id}>
                             {node.name} - {node.location}
                           </SelectItem>
                         ))}
+                        {nodesArray.filter(node => node.status === 'online').length === 0 && (
+                          <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                            No online nodes available
+                          </div>
+                        )}
                       </SelectContent>
                     </Select>
                   </div>

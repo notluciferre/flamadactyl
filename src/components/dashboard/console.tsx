@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
 import { initFirebase } from '@/lib/firebase';
 import { listenToBots, listenToBotLogs } from '@/lib/firebase-api';
 import { Trash2, ChevronsDown } from 'lucide-react';
@@ -127,14 +126,16 @@ export function ConsolePanel() {
     setLogs(prev => [...prev, cmdLog]);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('No session');
+      // Get Firebase ID token
+      if (!user) throw new Error('Not authenticated');
+      const idToken = await user.getIdToken();
+      if (!idToken) throw new Error('No ID token');
 
       const response = await fetch('/api/bots/command', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify({
           bot_id: selectedBotId,
@@ -161,13 +162,16 @@ export function ConsolePanel() {
     (async () => {
       const selectedBot = bots.find((b) => b.id === selectedBotId);
       try {
-        if (selectedBotId) {
-          const { data: { session } } = await supabase.auth.getSession();
+        if (selectedBotId && user) {
+          // Get Firebase ID token
+          const idToken = await user.getIdToken();
+          if (!idToken) throw new Error('No ID token');
+
           const resp = await fetch(`/api/bots/logs/${selectedBotId}`, {
             method: 'DELETE',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${session?.access_token}`,
+              'Authorization': `Bearer ${idToken}`,
             },
           });
 

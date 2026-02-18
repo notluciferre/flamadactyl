@@ -1,8 +1,9 @@
-'use client';
+"use client";
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import { getFirebaseAuth } from '@/lib/firebase';
+import { createUserWithEmailAndPassword, sendEmailVerification, signOut } from 'firebase/auth';
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
@@ -48,23 +49,28 @@ export function RegisterForm({
     setLoading(true);
 
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-      });
-
-      if (error) {
-        setError(error.message);
-      } else if (data.user && !data.session) {
-        // Email confirmation required
-        alert('Registration successful! Please check your email to verify your account before logging in.');
-        router.push('/login');
-      } else if (data.session) {
-        // Auto-login if email confirmation disabled
-        router.push('/dashboard');
+      const auth = getFirebaseAuth();
+      if (!auth) {
+        throw new Error('Firebase Auth not initialized. Please check your configuration.');
       }
-    } catch (err) {
-      setError('Network error. Please try again.');
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      if (cred.user) {
+        // Send verification email
+        try {
+          await sendEmailVerification(cred.user);
+        } catch (e) {
+          console.warn('Failed to send verification email:', e);
+        }
+        
+        // Sign out immediately - user must verify email before accessing dashboard
+        await signOut(auth);
+        
+        // Redirect to verify-email page instead of login
+        router.push('/verify-email');
+      }
+    } catch (err: any) {
+      console.error('[Register] Error:', err);
+      setError(err?.message || 'Network error. Please try again.');
     } finally {
       setLoading(false);
     }

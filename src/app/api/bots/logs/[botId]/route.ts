@@ -1,11 +1,7 @@
+export const runtime = 'nodejs';
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { getBotById, getBotLogs, clearBotLogs } from '@/lib/rtdb-admin';
 import { verifyUser } from "@/lib/auth-helpers";
-import { clearBotLogs, markLogsCleared } from '@/lib/firebase-api';
-import { supabaseAdmin } from '@/lib/supabase-admin';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 export async function GET(
   request: NextRequest,
@@ -23,54 +19,42 @@ export async function GET(
     // Verify user with retry logic
     const { authenticated, userId, error: authError } = await verifyUser(token);
     if (!authenticated || !userId) {
-      console.error('[Bot Logs] User verification failed:', authError);
+      console.error('[BOT LOGS GET] User verification failed:', authError);
       return NextResponse.json({ 
         error: authError || 'Unauthorized' 
       }, { status: 401 });
     }
 
-    const supabase = createClient(supabaseUrl, supabaseKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-
     const { botId } = await context.params;
 
     // Get bot to verify ownership
-    const { data: bot, error: botError } = await supabase
-      .from("bots")
-      .select("id, user_id")
-      .eq("id", botId)
-      .single();
+    const { data: bot, error: botError } = await getBotById(botId);
 
     if (botError || !bot) {
       return NextResponse.json({ error: "Bot not found" }, { status: 404 });
     }
 
     if (bot.user_id !== userId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return NextResponse.json({ error: "Forbidden - you do not own this bot" }, { status: 403 });
     }
 
     // Get logs (last 200 entries for better history)
-    const { data: logs, error } = await supabase
-      .from("bot_logs")
-      .select("*")
-      .eq("bot_id", botId)
-      .order("created_at", { ascending: false })
-      .limit(200);
+    const { data: logs, error } = await getBotLogs(botId, 200);
 
     if (error) {
-      console.error("Error fetching bot logs:", error);
+      console.error('[BOT LOGS GET] Error fetching bot logs:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Reverse to show oldest first
+    console.log('[BOT LOGS GET] Success:', { bot_id: botId, count: logs?.length || 0 });
+
     return NextResponse.json({ 
       success: true, 
-      logs: logs.reverse(),
-      count: logs.length,
+      logs: logs || [],
+      count: logs?.length || 0,
     });
   } catch (error: any) {
-    console.error("Error in bot logs API:", error);
+    console.error('[BOT LOGS GET] Error:', error);
     return NextResponse.json(
       { error: error.message || "Internal server error" },
       { status: 500 }
@@ -95,70 +79,36 @@ export async function DELETE(
       return NextResponse.json({ error: authError || 'Unauthorized' }, { status: 401 });
     }
 
-    const supabase = createClient(supabaseUrl, supabaseKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
-
     const { botId } = await context.params;
 
     // Verify ownership
-    const { data: bot, error: botError } = await supabase
-      .from('bots')
-      .select('id, user_id')
-      .eq('id', botId)
-      .single();
+    const { data: bot, error: botError } = await getBotById(botId);
 
     if (botError || !bot) {
       return NextResponse.json({ error: 'Bot not found' }, { status: 404 });
     }
 
     if (bot.user_id !== userId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      return NextResponse.json({ error: 'Forbidden - you do not own this bot' }, { status: 403 });
     }
 
-    // Delete Supabase logs using service role to avoid RLS issues
-    try {
-      const { error: adminDelError } = await supabaseAdmin
-        .from('bot_logs')
-        .delete()
-        .eq('bot_id', botId);
+    // Clear logs in RTDB
+    const { error: clearError } = await clearBotLogs(botId);
 
-      if (adminDelError) {
-        console.error('Error deleting bot_logs with service role:', adminDelError);
-        return NextResponse.json({ error: adminDelError.message || 'Failed to delete logs' }, { status: 500 });
-      }
-
-      // Set tombstone on bots table so other processes can detect cleared logs
-      const clearedAt = new Date().toISOString();
-      const { error: markError } = await supabaseAdmin
-        .from('bots')
-        .update({ logs_cleared_at: clearedAt })
-        .eq('id', botId);
-
-      if (markError) {
-        console.error('Failed to mark bot logs_cleared_at:', markError);
-      }
-
-      // Clear Firebase logs (real-time) and mark cleared timestamp
-      try {
-        await clearBotLogs(botId);
-        try {
-          await markLogsCleared(botId);
-        } catch (err) {
-          console.error('Error marking logs_cleared_at in Firebase:', err);
-        }
-      } catch (err) {
-        console.error('Error clearing firebase bot logs:', err);
-        // Not fatal — proceed
-      }
-
-      return NextResponse.json({ success: true, message: 'Logs cleared', cleared_at: clearedAt });
-    } catch (err: any) {
-      console.error('Error deleting bot logs (admin):', err);
-      return NextResponse.json({ error: err?.message || 'Failed to delete logs' }, { status: 500 });
+    if (clearError) {
+      console.error('[BOT LOGS DELETE] Error clearing logs:', clearError);
+      return NextResponse.json({ error: clearError.message || 'Failed to clear logs' }, { status: 500 });
     }
+
+    console.log('[BOT LOGS DELETE] Success:', { bot_id: botId, user_id: userId });
+
+    return NextResponse.json({ 
+      success: true, 
+      message: 'Logs cleared',
+      cleared_at: new Date().toISOString()
+    });
   } catch (error: any) {
-    console.error('Error deleting bot logs:', error);
+    console.error('[BOT LOGS DELETE] Error:', error);
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }
 }

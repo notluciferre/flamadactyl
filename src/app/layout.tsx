@@ -1,23 +1,26 @@
 import type { Metadata } from "next";
-import { Inter, IBM_Plex_Mono } from "next/font/google"
+// import { Inter, IBM_Plex_Mono } from "next/font/google"
 import { ThemeProvider } from "@/components/theme-provider"
 import { AuthProvider } from "@/contexts/AuthContext"
 import { ToastProvider } from "@/components/ui/toast-notification"
 import "./globals.css";
 
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["800"],
-  variable: "--font-inter",
-  display: "swap",
-})
+// Temporarily use system fonts to avoid Google Fonts fetch issues during build
+// const inter = Inter({
+//   subsets: ["latin"],
+//   weight: ["800"],
+//   variable: "--font-inter",
+//   display: "swap",
+//   fallback: ["system-ui", "arial"],
+// })
 
-const ibmPlexMono = IBM_Plex_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-ibm",
-  display: "swap",
-})
+// const ibmPlexMono = IBM_Plex_Mono({
+//   subsets: ["latin"],
+//   weight: ["400", "500", "600"],
+//   variable: "--font-ibm",
+//   display: "swap",
+//   fallback: ["Courier New", "monospace"],
+// })
 
 export const metadata: Metadata = {
   title: "CakraNode - Powerful Bot Management",
@@ -38,7 +41,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${ibmPlexMono.variable} ${inter.variable} font-sans antialiased`}
+        className="font-sans antialiased"
       >
         <ThemeProvider
             attribute="class"

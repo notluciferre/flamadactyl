@@ -1,11 +1,7 @@
+export const runtime = 'nodejs';
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { verifyAdmin } from '@/lib/auth-helpers';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { updateNode } from '@/lib/rtdb-admin';
 
 export async function PUT(request: NextRequest) {
   try {
@@ -37,16 +33,11 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Nothing to update' }, { status: 400 });
     }
 
-    const { data: updatedNode, error: updateError } = await supabase
-      .from('nodes')
-      .update(updatePayload)
-      .eq('id', node_id)
-      .select()
-      .single();
+    const { data: updatedNode, error: updateError } = await updateNode(node_id, updatePayload);
 
     if (updateError) {
       console.error('Error updating node:', updateError);
-      return NextResponse.json({ success: false, error: updateError.message }, { status: 500 });
+      return NextResponse.json({ success: false, error: updateError.message || 'Failed to update node' }, { status: 500 });
     }
 
     return NextResponse.json({ success: true, node: updatedNode });

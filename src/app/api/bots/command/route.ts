@@ -1,17 +1,10 @@
+export const runtime = 'nodejs';
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { initFirebase } from '@/lib/firebase';
-import { sendBotCommand } from '@/lib/firebase-api';
+import { getBotById, updateBot, createCommand } from '@/lib/rtdb-admin';
 import { verifyUser } from '@/lib/auth-helpers';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 export async function POST(request: NextRequest) {
   try {
-    // Initialize Firebase for this request
-    initFirebase();
-    
     // Get user from auth header
     const authHeader = request.headers.get('authorization');
     if (!authHeader) {
@@ -23,15 +16,11 @@ export async function POST(request: NextRequest) {
     // Verify user with retry logic
     const { authenticated, userId, error: authError } = await verifyUser(token);
     if (!authenticated || !userId) {
-      console.error('[Bot Command] User verification failed:', authError);
+      console.error('[BOT COMMAND] User verification failed:', authError);
       return NextResponse.json({ 
         error: authError || 'Unauthorized' 
       }, { status: 401 });
     }
-
-    const supabase = createClient(supabaseUrl, supabaseKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    });
 
     const body = await request.json();
     const { bot_id, action, command: execCommand } = body;
@@ -54,17 +43,20 @@ export async function POST(request: NextRequest) {
     }
 
     // Get bot to verify ownership and get node_id
-    const { data: bot, error: botError } = await supabase
-      .from('bots')
-      .select('*')
-      .eq('id', bot_id)
-      .eq('user_id', userId)
-      .single();
+    const { data: bot, error: botError } = await getBotById(bot_id);
 
     if (botError || !bot) {
       return NextResponse.json(
-        { error: 'Bot not found or access denied' },
+        { error: 'Bot not found' },
         { status: 404 }
+      );
+    }
+
+    // Verify ownership
+    if (bot.user_id !== userId) {
+      return NextResponse.json(
+        { error: 'Access denied - you do not own this bot' },
+        { status: 403 }
       );
     }
 
@@ -75,34 +67,39 @@ export async function POST(request: NextRequest) {
       payload.username = bot.username;
       payload.server_ip = bot.server_ip;
       payload.server_port = bot.server_port;
-      payload.auto_reconnect = bot.metadata?.auto_reconnect ?? true;
+      payload.auto_reconnect = bot.auto_reconnect ?? true;
       payload.offline_mode = bot.offline_mode !== false;
     } else if (action === 'exec' && execCommand) {
       payload.command = execCommand;
     }
 
-    // Send command to Firebase (real-time to node server)
-    await sendBotCommand(bot.node_id, action, bot.id, payload);
+    // Create command in RTDB (node will pick it up)
+    const { data: commandData, error: cmdError } = await createCommand({
+      user_id: userId,
+      node_id: bot.node_id,
+      bot_id: bot_id,
+      action,
+      payload,
+    });
+
+    if (cmdError) throw cmdError;
 
     // Update bot status if starting/stopping
     if (action === 'start') {
-      await supabase
-        .from('bots')
-        .update({ status: 'starting' })
-        .eq('id', bot_id);
+      await updateBot(bot_id, { status: 'starting', updated_at: Date.now() });
     } else if (action === 'stop') {
-      await supabase
-        .from('bots')
-        .update({ status: 'stopping' })
-        .eq('id', bot_id);
+      await updateBot(bot_id, { status: 'stopping', updated_at: Date.now() });
     }
+
+    console.log('[BOT COMMAND] Success:', { bot_id, action, user_id: userId, command_id: commandData?.id });
 
     return NextResponse.json({
       success: true,
       message: `Bot ${action} command sent successfully`,
+      command_id: commandData?.id,
     });
   } catch (error: any) {
-    console.error('Bot command error:', error);
+    console.error('[BOT COMMAND] Error:', error);
     return NextResponse.json(
       { error: error.message || 'Failed to execute bot command' },
       { status: 500 }

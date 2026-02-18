@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase-admin';
+import { getOnlineNodes } from '@/lib/rtdb-admin';
+
+export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
   try {
     // Fetch online nodes only (no auth required for selection)
-    const { data: nodes, error } = await supabaseAdmin
-      .from('nodes')
-      .select('id, name, location, status')
-      .eq('status', 'online')
-      .order('name');
+    const { data: nodes, error } = await getOnlineNodes();
 
     if (error) throw error;
 

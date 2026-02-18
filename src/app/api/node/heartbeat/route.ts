@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase-admin';
+import { updateNode, addNodeStats } from '@/lib/rtdb-admin';
+
+export const runtime = 'nodejs';
 
 const NODE_SECRET_KEY = process.env.NODE_SECRET_KEY || 'cakranode-secret-2026';
 
@@ -10,6 +12,7 @@ export async function POST(request: NextRequest) {
 
     // Validate secret key
     if (secret_key !== NODE_SECRET_KEY) {
+      console.log('[Heartbeat] Invalid secret key');
       return NextResponse.json(
         { error: 'Invalid secret key' },
         { status: 401 }
@@ -18,38 +21,26 @@ export async function POST(request: NextRequest) {
 
     // Validate required fields
     if (!node_id) {
+      console.log('[Heartbeat] Missing node_id');
       return NextResponse.json(
         { error: 'Missing required field: node_id' },
         { status: 400 }
       );
     }
 
+    console.log(`[Heartbeat] Received from node ${node_id}, bots: ${stats?.bot_count || 0}, CPU: ${stats?.cpu_usage || 0}%`);
+
     // Update node heartbeat
-    const { error: nodeError } = await supabaseAdmin
-      .from('nodes')
-      .update({
-        status: 'online',
-        last_heartbeat: new Date().toISOString(),
-      })
-      .eq('id', node_id);
+    const { error: nodeError } = await updateNode(node_id, {
+      status: 'online',
+      last_heartbeat: new Date().toISOString(),
+    });
 
     if (nodeError) throw nodeError;
 
     // Insert node stats if provided
     if (stats) {
-      const { error: statsError } = await supabaseAdmin
-        .from('node_stats')
-        .insert({
-          node_id,
-          cpu_usage: stats.cpu_usage || 0,
-          ram_used: stats.ram_used || 0,
-          ram_total: stats.ram_total || 0,
-          disk_used: stats.disk_used || 0,
-          disk_total: stats.disk_total || 0,
-          network_upload: stats.network_upload || 0,
-          network_download: stats.network_download || 0,
-          bot_count: stats.bot_count || 0,
-        });
+      const { error: statsError } = await addNodeStats(node_id, stats);
 
       if (statsError) {
         console.error('Failed to insert node stats:', statsError);

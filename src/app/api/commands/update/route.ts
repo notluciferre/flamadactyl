@@ -1,61 +1,23 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase-admin';
+/**
+ * DEPRECATED - This endpoint is no longer used
+ * 
+ * The system has been migrated from HTTP polling to Firebase Realtime Database.
+ * Node servers now update command results directly in Firebase RTDB instead of calling this endpoint.
+ * 
+ * Migration: Node servers use update() on commands/{commandId} path in Firebase
+ * 
+ * This file is kept for reference only and will be removed in future versions.
+ */
 
-const NODE_SECRET_KEY = process.env.NODE_SECRET_KEY || 'cakranode-secret-2026';
+export const runtime = 'nodejs';
+import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { command_id, secret_key, status, result, error: cmdError } = body;
-
-    // Validate secret key
-    if (secret_key !== NODE_SECRET_KEY) {
-      return NextResponse.json(
-        { error: 'Invalid secret key' },
-        { status: 401 }
-      );
-    }
-
-    if (!command_id || !status) {
-      return NextResponse.json(
-        { error: 'Missing required fields: command_id, status' },
-        { status: 400 }
-      );
-    }
-
-    // Update command status
-    const updateData: any = {
-      status,
-    };
-
-    if (status === 'completed' || status === 'failed') {
-      updateData.completed_at = new Date().toISOString();
-    }
-
-    if (result) {
-      updateData.result = result;
-    }
-
-    if (cmdError) {
-      updateData.error = cmdError;
-    }
-
-    const { error: updateError } = await supabaseAdmin
-      .from('commands')
-      .update(updateData)
-      .eq('id', command_id);
-
-    if (updateError) throw updateError;
-
-    return NextResponse.json({
-      success: true,
-      message: 'Command updated successfully',
-    });
-  } catch (error: any) {
-    console.error('Command update error:', error);
-    return NextResponse.json(
-      { error: error.message || 'Failed to update command' },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json(
+    { 
+      error: 'This endpoint is deprecated. Node servers now update command results directly to Firebase Realtime Database.',
+      migration: 'Use Firebase update() on commands/{commandId} path'
+    },
+    { status: 410 } // 410 Gone
+  );
 }

@@ -32,14 +32,19 @@ export default function AccountPage() {
   useEffect(() => {
     if (!loading && !user) {
       router.push('/login');
+      return;
     }
-    if (user) {
+  }, [user, loading, router]);
+
+  // Initialize profile data from user
+  useEffect(() => {
+    if (user && !profileData.email) {
       setProfileData({
-        name: user.user_metadata?.name || 'User',
+        name: user.displayName || 'User',
         email: user.email || '',
       });
     }
-  }, [user, loading, router]);
+  }, [user]);
 
   if (loading) {
     return (
@@ -115,7 +120,7 @@ export default function AccountPage() {
                 <div className="flex items-center gap-3 text-sm">
                   <User className="w-4 h-4 text-muted-foreground" />
                   <span className="text-muted-foreground">User ID:</span>
-                  <span className="font-mono text-xs">{user.id}</span>
+                  <span className="font-mono text-xs">{user.uid}</span>
                 </div>
                 <div className="flex items-center gap-3 text-sm">
                   <Shield className="w-4 h-4 text-muted-foreground" />

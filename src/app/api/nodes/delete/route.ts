@@ -1,12 +1,7 @@
+export const runtime = 'nodejs';
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { deleteNode } from '@/lib/firebase-api';
 import { verifyAdmin } from '@/lib/auth-helpers';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { getBotsByNode, deleteNode } from '@/lib/rtdb-admin';
 
 export async function POST(request: NextRequest) {
   try {
@@ -36,11 +31,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if node has active bots
-    const { data: bots } = await supabase
-      .from('bots')
-      .select('id')
-      .eq('node_id', node_id)
-      .eq('status', 'running');
+    const { data: bots } = await getBotsByNode(node_id);
 
     if (bots && bots.length > 0) {
       return NextResponse.json({ 
@@ -49,22 +40,11 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Delete from Supabase
-    const { error: deleteError } = await supabase
-      .from('nodes')
-      .delete()
-      .eq('id', node_id);
-
+    // Delete from RTDB
+    const { error: deleteError } = await deleteNode(node_id);
     if (deleteError) {
       console.error('Error deleting node:', deleteError);
-      return NextResponse.json({ success: false, error: deleteError.message }, { status: 500 });
-    }
-
-    // Delete from Firebase (cleanup real-time data)
-    try {
-      await deleteNode(node_id);
-    } catch (fbError) {
-      console.warn('Firebase cleanup error (non-critical):', fbError);
+      return NextResponse.json({ success: false, error: deleteError.message || 'Failed to delete node' }, { status: 500 });
     }
 
     return NextResponse.json({

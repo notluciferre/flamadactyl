@@ -1,115 +1,76 @@
 /**
- * Authentication Helper Functions
- * Provides robust auth verification with retry logic
+ * Authentication Helper Functions (Firebase)
+ * Uses Firebase Admin SDK to verify ID tokens and fetch user info.
  */
 
-import { createClient } from '@supabase/supabase-js';
 import { withRetryAndTimeout } from './retry-utils';
+import { verifyIdToken, getUserByUid } from './firebase-admin';
 
-const ADMIN_EMAIL = 'admin@cakranode.tech';
+const ADMIN_EMAIL = process.env.NEXT_PUBLIC_ADMIN_EMAIL?.replace(/\"/g, '') || 'admin@cakranode.tech';
 
-/**
- * Verify if user is admin with retry logic
- * Handles network timeouts gracefully
- */
 export async function verifyAdmin(token: string): Promise<{ 
   isAdmin: boolean; 
   userId: string | null; 
   error: string | null;
 }> {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-
   try {
-    // Use retry with timeout for network reliability
-    const { data: { user }, error } = await withRetryAndTimeout(
-      () => supabase.auth.getUser(token),
-      {
-        maxRetries: 2,
-        delay: 500,
-        timeout: 5000, // 5s timeout per attempt
-      }
-    );
+    const decoded = await withRetryAndTimeout(() => verifyIdToken(token), {
+      maxRetries: 2,
+      delay: 500,
+      timeout: 5000,
+    });
 
-    if (error) {
-      console.error('[Auth] Failed to verify user:', error.message);
-      return { 
-        isAdmin: false, 
-        userId: null, 
-        error: error.message 
-      };
+    if (!decoded || !decoded.uid) {
+      return { isAdmin: false, userId: null, error: 'Invalid token' };
     }
 
-    if (!user) {
-      return { 
-        isAdmin: false, 
-        userId: null, 
-        error: 'User not found' 
-      };
+    const user = await withRetryAndTimeout(() => getUserByUid(decoded.uid), {
+      maxRetries: 1,
+      delay: 200,
+      timeout: 3000,
+    });
+
+    if (!user || !user.email) {
+      return { isAdmin: false, userId: null, error: 'User not found' };
     }
 
     const isAdmin = user.email === ADMIN_EMAIL;
-    
-    return { 
-      isAdmin, 
-      userId: user.id, 
-      error: isAdmin ? null : 'Admin access required' 
-    };
-
-  } catch (error) {
-    console.error('[Auth] Admin verification failed:', error);
-    return { 
-      isAdmin: false, 
-      userId: null, 
-      error: error instanceof Error ? error.message : 'Verification failed' 
-    };
+    return { isAdmin, userId: user.uid, error: isAdmin ? null : 'Admin access required' };
+  } catch (err: any) {
+    console.error('[Auth] Admin verification failed:', err);
+    return { isAdmin: false, userId: null, error: err?.message || 'Verification failed' };
   }
 }
 
-/**
- * Verify user authentication (non-admin)
- */
 export async function verifyUser(token: string): Promise<{
   authenticated: boolean;
   userId: string | null;
+  email: string | null;
   error: string | null;
 }> {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-
   try {
-    const { data: { user }, error } = await withRetryAndTimeout(
-      () => supabase.auth.getUser(token),
-      {
-        maxRetries: 2,
-        delay: 500,
-        timeout: 5000,
-      }
-    );
+    const decoded = await withRetryAndTimeout(() => verifyIdToken(token), {
+      maxRetries: 2,
+      delay: 500,
+      timeout: 5000,
+    });
 
-    if (error || !user) {
-      return {
-        authenticated: false,
-        userId: null,
-        error: error?.message || 'User not found'
-      };
+    if (!decoded || !decoded.uid) {
+      return { authenticated: false, userId: null, email: null, error: 'Invalid token' };
     }
 
-    return {
-      authenticated: true,
-      userId: user.id,
-      error: null
-    };
-  } catch (error) {
-    console.error('[Auth] User verification failed:', error);
-    return {
-      authenticated: false,
-      userId: null,
-      error: error instanceof Error ? error.message : 'Verification failed'
-    };
+    // Get user to fetch email
+    const user = await withRetryAndTimeout(() => getUserByUid(decoded.uid), {
+      maxRetries: 1,
+      delay: 200,
+      timeout: 3000,
+    });
+
+    const email = user?.email || decoded.email || null;
+
+    return { authenticated: true, userId: decoded.uid, email, error: null };
+  } catch (err: any) {
+    console.error('[Auth] User verification failed:', err);
+    return { authenticated: false, userId: null, email: null, error: err?.message || 'Verification failed' };
   }
 }

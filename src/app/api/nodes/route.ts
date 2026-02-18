@@ -1,10 +1,7 @@
+export const runtime = 'nodejs';
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase-admin';
-import { createClient } from '@supabase/supabase-js';
+import { getAllNodes, getLatestNodeStats, getBotCountForNode } from '@/lib/rtdb-admin';
 import { verifyAdmin } from '@/lib/auth-helpers';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,34 +22,40 @@ export async function GET(request: NextRequest) {
       }, { status: 401 });
     }
 
-    // Fetch all nodes (bypass RLS with admin client)
-    const { data: nodes, error: nodesError } = await supabaseAdmin
-      .from('nodes')
-      .select('*')
-      .order('created_at', { ascending: false });
+    // Fetch all nodes from RTDB
+    const { data: nodes, error: nodesError } = await getAllNodes();
 
     if (nodesError) throw nodesError;
 
+    // Filter out invalid/incomplete nodes
+    const validNodes = (nodes || []).filter((node: any) => 
+      node.id && node.name && node.location
+    );
+
+    console.log(`[Nodes List] Found ${validNodes.length} valid nodes out of ${nodes?.length || 0} total`);
+
     // Get stats and bot count for each node
     const nodesWithStats = await Promise.all(
-      (nodes || []).map(async (node) => {
-        // Get latest stats
-        const { data: stats } = await supabaseAdmin
-          .from('node_stats')
-          .select('*')
-          .eq('node_id', node.id)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .single();
+      validNodes.map(async (node: any) => {
+        const { data: stats } = await getLatestNodeStats(node.id);
+        const { data: count } = await getBotCountForNode(node.id);
 
-        // Count bots
-        const { count } = await supabaseAdmin
-          .from('bots')
-          .select('*', { count: 'exact', head: true })
-          .eq('node_id', node.id);
+        // Auto-detect offline: if last heartbeat > 90 seconds ago
+        let actualStatus = node.status;
+        if (node.last_heartbeat) {
+          const lastHeartbeat = new Date(node.last_heartbeat).getTime();
+          const now = Date.now();
+          const secondsSinceHeartbeat = (now - lastHeartbeat) / 1000;
+          
+          if (secondsSinceHeartbeat > 90 && actualStatus === 'online') {
+            actualStatus = 'offline';
+            console.log(`[Nodes List] Auto-detected offline for ${node.id}: ${Math.floor(secondsSinceHeartbeat)}s since last heartbeat`);
+          }
+        }
 
         return {
           ...node,
+          status: actualStatus,
           bot_count: count || 0,
           cpu_usage: stats?.cpu_usage || 0,
           ram_used: stats?.ram_used || 0,

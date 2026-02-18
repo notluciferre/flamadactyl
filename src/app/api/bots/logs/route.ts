@@ -1,17 +1,6 @@
+export const runtime = 'nodejs';
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-
-// Use service role key to bypass RLS
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  }
-);
+import { addBotLog } from '@/lib/rtdb-admin';
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,59 +14,55 @@ export async function POST(request: NextRequest) {
 
     // Handle batch logs
     if (logs && Array.isArray(logs) && logs.length > 0) {
-      const logEntries = logs.map(log => ({
-        bot_id,
-        log_type: log.log_type,
-        message: log.message,
-        metadata: log.metadata || {},
-        created_at: log.timestamp || new Date().toISOString(),
-      }));
+      const insertedLogs = [];
+      
+      for (const log of logs) {
+        const { data, error } = await addBotLog(bot_id, {
+          log_type: log.log_type,
+          message: log.message,
+          metadata: log.metadata || {},
+          timestamp: log.timestamp || Date.now(),
+        });
 
-      const { data, error } = await supabaseAdmin
-        .from("bot_logs")
-        .insert(logEntries)
-        .select();
-
-      if (error) {
-        console.error("Error inserting batch logs:", error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        if (error) {
+          console.error('[BOT LOGS] Error inserting log:', error);
+        } else {
+          insertedLogs.push(data);
+        }
       }
 
       return NextResponse.json({ 
         success: true, 
-        count: logEntries.length,
-        logs: data 
+        count: insertedLogs.length,
+        logs: insertedLogs 
       });
     }
 
     // Handle single log (backward compatibility)
     if (!bot_id || !log_type || !message) {
       return NextResponse.json(
-        { error: "Missing required fields" },
+        { error: "Missing required fields: bot_id, log_type, message" },
         { status: 400 }
       );
     }
 
     // Insert log entry
-    const { data, error } = await supabaseAdmin
-      .from("bot_logs")
-      .insert({
-        bot_id,
-        log_type,
-        message,
-        metadata: metadata || {},
-      })
-      .select()
-      .single();
+    const { data, error } = await addBotLog(bot_id, {
+      log_type,
+      message,
+      metadata: metadata || {},
+    });
 
     if (error) {
-      console.error("Error inserting bot log:", error);
+      console.error('[BOT LOGS] Error inserting bot log:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    console.log('[BOT LOGS] Log added:', { bot_id, log_type });
+
     return NextResponse.json({ success: true, log: data });
   } catch (error: any) {
-    console.error("Error in bot logs API:", error);
+    console.error('[BOT LOGS] Error:', error);
     return NextResponse.json(
       { error: error.message || "Internal server error" },
       { status: 500 }

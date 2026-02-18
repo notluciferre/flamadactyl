@@ -1,12 +1,8 @@
+export const runtime = 'nodejs';
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createNode } from '@/lib/rtdb-admin';
 import { randomBytes } from 'crypto';
 import { verifyAdmin } from '@/lib/auth-helpers';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
 
 export async function POST(request: NextRequest) {
   try {
@@ -38,25 +34,24 @@ export async function POST(request: NextRequest) {
     // Generate unique access token for this node
     const accessToken = `cn-${randomBytes(32).toString('hex')}`;
 
-    // Create node in database
-    const { data: node, error: nodeError } = await supabase
-      .from('nodes')
-      .insert({
-        name,
-        location,
-        ip_address: ip_address || 'auto',
-        status: 'offline',
-        metadata: {
-          access_token: accessToken,
-          created_by: userId,
-        },
-      })
-      .select()
-      .single();
+    // Create node in RTDB
+    const { data: node, error: nodeError } = await createNode({
+      name,
+      location,
+      ip_address: ip_address || 'auto',
+      status: 'offline',
+      access_token: accessToken,
+      created_by: userId,
+      created_at: Date.now(),
+    });
 
     if (nodeError) {
       console.error('Error creating node:', nodeError);
-      return NextResponse.json({ success: false, error: nodeError.message }, { status: 500 });
+      return NextResponse.json({ success: false, error: nodeError.message || 'Failed to create node' }, { status: 500 });
+    }
+
+    if (!node) {
+      return NextResponse.json({ success: false, error: 'Failed to create node - no data returned' }, { status: 500 });
     }
 
     return NextResponse.json({

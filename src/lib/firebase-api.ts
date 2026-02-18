@@ -4,8 +4,7 @@
  */
 
 import { ref, onValue, onChildAdded, push, set, remove, get } from 'firebase/database';
-import { getFirebaseDatabase } from './firebase';
-import { supabase } from './supabase';
+import { getFirebaseDatabase, getFirebaseAuth } from './firebase';
 import type { Bot, BotLog, Node, NodeStats } from '@/types/api';
 
 function getDb() {
@@ -23,52 +22,27 @@ function getDb() {
 export function listenToNodes(callback: (nodes: Record<string, Node>) => void) {
   const db = getDb();
   if (!db) return () => {};
+  const nodesRef = ref(db, 'nodes');
+  const unsubscribe = onValue(nodesRef, (snapshot) => {
+    const firebaseData = snapshot.val() || {};
+    console.log('[Firebase API] listenToNodes - Raw data from Firebase:', firebaseData);
+    
+    const mergedNodes: Record<string, Node> = {};
+    Object.keys(firebaseData).forEach((id) => {
+      mergedNodes[id] = {
+        id,
+        ...(firebaseData[id] || {}),
+      } as Node;
+    });
+    
+    console.log('[Firebase API] listenToNodes - Merged nodes:', mergedNodes);
+    console.log('[Firebase API] listenToNodes - Node IDs:', Object.keys(mergedNodes));
+    
+    callback(mergedNodes);
+  });
 
-  let unsubscribe: (() => void) | null = null;
-
-  // Get nodes from Supabase first
-  const fetchNodes = async () => {
-    try {
-      const { data: nodesData, error } = await supabase
-        .from('nodes')
-        .select('*');
-      
-      if (error) {
-        console.error('[Firebase API] Failed to fetch nodes from Supabase:', error);
-        return;
-      }
-      
-      if (!nodesData) return;
-      
-      // Listen to Firebase for real-time status
-      const nodesRef = ref(db, 'nodes');
-      unsubscribe = onValue(nodesRef, (snapshot) => {
-        const firebaseData = snapshot.val() || {};
-        
-        // Merge Supabase data (static) with Firebase data (real-time status)
-        const mergedNodes: Record<string, Node> = {};
-        nodesData.forEach((node) => {
-          mergedNodes[node.id] = {
-            ...node,
-            status: firebaseData[node.id]?.status || { online: false, lastUpdate: 0 },
-          };
-        });
-        
-        callback(mergedNodes);
-      });
-    } catch (err) {
-      console.error('[Firebase API] Error in listenToNodes:', err);
-    }
-  };
-  
-  fetchNodes();
-  
-  // Return proper unsubscribe function
   return () => {
-    if (unsubscribe) {
-      unsubscribe();
-      unsubscribe = null;
-    }
+    unsubscribe();
   };
 }
 
@@ -92,77 +66,39 @@ export function listenToBots(callback: (bots: Record<string, Bot>) => void) {
     callback({}); // Return empty bots if no DB
     return () => {};
   }
+  const auth = getFirebaseAuth();
+  const currentUser = auth?.currentUser;
 
-  let unsubscribe: (() => void) | null = null;
+  const botsRef = ref(db, 'bots');
+  const unsubscribe = onValue(botsRef, (snapshot) => {
+    const firebaseData = snapshot.val() || {};
+    console.log('[Firebase API] listenToBots - Raw data from Firebase:', firebaseData);
+    
+    const mergedBots: Record<string, Bot> = {};
 
-  // Get user's bots from Supabase first
-  const fetchUserBots = async () => {
-    try {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
-        console.error('[Firebase API] Failed to get user:', userError);
-        callback({}); // Return empty bots if no user
-        return;
-      }
-      
-      console.log('[Firebase API] Fetching bots for user:', user.id);
-      
-      const { data: userBots, error: botsError } = await supabase
-        .from('bots')
-        .select('*')
-        .eq('user_id', user.id);
-      
-      if (botsError) {
-        console.error('[Firebase API] Failed to fetch bots from Supabase:', botsError);
-        callback({}); // Return empty bots on error
-        return;
-      }
-      
-      if (!userBots || userBots.length === 0) {
-        console.log('[Firebase API] No bots found for user');
-        callback({}); // Return empty bots if none found
-        return;
-      }
-      
-      console.log('[Firebase API] Found', userBots.length, 'bots, setting up Firebase listener');
-      
-      // Listen to Firebase for real-time status
-      const botsRef = ref(db, 'bots');
-      unsubscribe = onValue(botsRef, (snapshot) => {
-        const firebaseData = snapshot.val() || {};
-        
-        // Merge Supabase data (static) with Firebase data (real-time status)
-        const mergedBots: Record<string, Bot> = {};
-        userBots.forEach((bot) => {
-          const firebaseStatus = firebaseData[bot.id]?.status || { status: 'stopped', error: null, timestamp: 0 };
-          
-          // Skip bots with "deleted" status from Firebase
-          if (firebaseStatus.status === 'deleted') {
-            return;
-          }
-          
-          mergedBots[bot.id] = {
-            ...bot,
-            status: firebaseStatus,
-          };
-        });
-        
-        console.log('[Firebase API] Merged bots count:', Object.keys(mergedBots).length);
-        callback(mergedBots);
-      });
-    } catch (err) {
-      console.error('[Firebase API] Error in listenToBots:', err);
-    }
-  };
-  
-  fetchUserBots();
-  
-  // Return proper unsubscribe function
+    Object.keys(firebaseData).forEach((id) => {
+      const bot = firebaseData[id];
+      // If user is signed in, filter by user_id
+      if (currentUser && bot.user_id !== currentUser.uid) return;
+
+      const firebaseStatus = bot.status || { status: 'stopped', error: null, timestamp: 0 };
+      if (firebaseStatus.status === 'deleted') return;
+
+      mergedBots[id] = {
+        id,
+        ...bot,
+        status: firebaseStatus,
+      } as Bot;
+    });
+
+    console.log('[Firebase API] listenToBots - Merged bots:', mergedBots);
+    console.log('[Firebase API] listenToBots - Bot node_ids:', Object.entries(mergedBots).map(([id, b]) => ({ id, node_id: b.node_id })));
+    
+    callback(mergedBots);
+  });
+
   return () => {
-    if (unsubscribe) {
-      unsubscribe();
-      unsubscribe = null;
-    }
+    unsubscribe();
   };
 }
 
@@ -196,6 +132,11 @@ export function listenToBotLogs(botId: string, callback: (log: BotLog) => void) 
 
 // ===== COMMAND OPERATIONS =====
 
+/**
+ * @deprecated Use REST API /api/bots/command instead
+ * This function writes directly to Firebase which is no longer monitored by node servers.
+ * Node servers now poll commands via REST API.
+ */
 export async function sendBotCommand(nodeId: string, action: 'start' | 'stop' | 'restart' | 'exec' | 'delete', botId: string, payload?: any) {
   const db = getDb();
   if (!db) throw new Error('Firebase not initialized');

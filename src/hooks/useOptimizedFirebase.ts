@@ -67,40 +67,40 @@ export function useOptimizedFirebaseBots() {
 }
 
 /**
- * Optimized hook for listening to nodes with throttled updates
+ * Optimized hook for listening to nodes - NO THROTTLING for instant updates
  */
 export function useOptimizedFirebaseNodes() {
   const [nodes, setNodes] = useState<Record<string, Node>>({});
   const [loading, setLoading] = useState(true);
 
-  // Throttled update - max 1 update per 2 seconds
-  const throttledSetNodes = useMemo(
-    () => throttle((data: Record<string, Node>) => {
-      setNodes(data);
-      setLoading(false);
-    }, 2000),
-    []
-  );
-
   useEffect(() => {
     // Initialize Firebase before setting up listeners
     initFirebase();
     
+    console.log('[useOptimizedFirebaseNodes] Setting up Firebase listener');
     const unsubscribe = listenToNodes((data) => {
-      throttledSetNodes(data);
+      console.log('[useOptimizedFirebaseNodes] listenToNodes callback triggered with data:', data);
+      console.log('[useOptimizedFirebaseNodes] Node count:', Object.keys(data).length);
+      console.log('[useOptimizedFirebaseNodes] Node IDs:', Object.keys(data));
+      
+      // Update immediately without throttling for instant node info
+      setNodes(data);
+      setLoading(false);
     });
 
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, [throttledSetNodes]);
+  }, []); // Empty dependency array - setup once
 
   // Memoized nodes array
   const nodesArray = useMemo(() => {
-    return Object.entries(nodes).map(([nodeId, node]) => ({
+    const arr = Object.entries(nodes).map(([nodeId, node]) => ({
       ...node,
       id: nodeId,
     }));
+    console.log('[useOptimizedFirebaseNodes] nodesArray computed:', arr);
+    return arr;
   }, [nodes]);
 
   // Memoized stats

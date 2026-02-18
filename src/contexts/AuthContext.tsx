@@ -1,8 +1,9 @@
-'use client';
+"use client";
 
 import { createContext, useContext, useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
-import { User } from '@supabase/supabase-js';
+import { getFirebaseAuth } from '@/lib/firebase';
+import type { User } from 'firebase/auth';
+import { onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
 
 interface AuthContextType {
   user: User | null;
@@ -21,25 +22,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check active session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
+    const auth = getFirebaseAuth();
+    if (!auth) {
+      console.warn('[AuthContext] Firebase Auth not available');
+      setLoading(false);
+      return;
+    }
+
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      console.log('[AuthContext] Auth state changed:', u ? u.email : 'signed out');
+      
+      // If user is signed in but email not verified, sign them out
+      if (u && !u.emailVerified) {
+        console.warn('[AuthContext] User email not verified, signing out');
+        
+        // Force reload to get latest emailVerified status
+        await u.reload();
+        
+        // Check again after reload
+        if (!u.emailVerified) {
+          console.log('[AuthContext] Email still not verified after reload, forcing sign out');
+          await firebaseSignOut(auth);
+          setUser(null);
+          setLoading(false);
+          return;
+        }
+      }
+      
+      setUser(u ?? null);
       setLoading(false);
     });
 
-    // Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
+    return () => unsubscribe();
   }, []);
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    const auth = getFirebaseAuth();
+    if (!auth) {
+      console.warn('[AuthContext] Cannot sign out - auth not initialized');
+      return;
+    }
+    await firebaseSignOut(auth);
     setUser(null);
   };
 

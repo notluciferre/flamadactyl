@@ -1,0 +1,32 @@
+{
+  "rules": {
+    "nodes": {
+      ".indexOn": ["status", "access_token"],
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "node_stats": {
+      ".indexOn": ["node_id", "created_at"],
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "bots": {
+      ".indexOn": ["user_id", "node_id", "status"],
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "bot_logs": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "commands": {
+      ".indexOn": ["node_id", "status", "user_id", "created_at"],
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "_test": {
+      ".read": true,
+      ".write": true
+    }
+  }
+}

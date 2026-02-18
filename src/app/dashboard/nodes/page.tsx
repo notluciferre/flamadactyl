@@ -3,9 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
-import { initFirebase } from '@/lib/firebase';
-import { listenToNodes } from '@/lib/firebase-api';
+import { getFirebaseAuth } from '@/lib/firebase';
 import { useToast } from '@/components/ui/toast-notification';
 import { DashboardSidebar } from '@/components/dashboard/sidebar';
 import { Card, CardContent } from '@/components/ui/card';
@@ -25,7 +23,7 @@ import {
 } from '@/components/ui/dialog';
 import { Server, Activity, RefreshCw, Plus, Trash2, Copy, Check, Edit2 } from 'lucide-react';
 
-const ADMIN_EMAIL = 'admin@cakranode.tech';
+const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'admin@flamahost.id').replace(/\"/g, '');
 
 interface NodeWithStats {
   id: string;
@@ -65,31 +63,15 @@ export default function NodesPage() {
       router.push('/dashboard');
     }
     if (user && user.email === ADMIN_EMAIL) {
-      // Initialize Firebase
-      initFirebase();
-      
-      // Fetch initial nodes from API
+      // Fetch nodes from API (RTDB)
       fetchNodes();
       
-      // Start real-time Firebase listener for node status
-      const unsubscribe = listenToNodes((nodesData) => {
-        const nodesList = Object.entries(nodesData).map(([id, node]: [string, any]) => ({
-          id,
-          name: node.name || '',
-          location: node.location || '',
-          ip_address: node.ip_address || '',
-          status: node.status?.online ? 'online' : 'offline',
-          last_heartbeat: node.status?.lastUpdate ? new Date(node.status.lastUpdate).toISOString() : null,
-          bot_count: node.status?.stats?.bot_count || 0,
-          cpu_usage: node.status?.stats?.cpu_usage || 0,
-          ram_used: node.status?.stats?.ram_used || 0,
-          ram_total: node.status?.stats?.ram_total || 0,
-        }));
-        setNodes(nodesList);
-        setIsLoadingNodes(false);
-      });
+      // Auto-refresh every 10 seconds
+      const interval = setInterval(() => {
+        fetchNodes();
+      }, 10000);
       
-      return () => unsubscribe();
+      return () => clearInterval(interval);
     }
   }, [user, loading, router]);
 
@@ -101,14 +83,16 @@ export default function NodesPage() {
 
     setIsCreating(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('No session');
+      const auth = getFirebaseAuth();
+      const user = auth?.currentUser;
+      if (!user) throw new Error('No session');
+      const token = await user.getIdToken();
 
       const response = await fetch('/api/nodes/create', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify(newNode),
       });
@@ -136,14 +120,16 @@ export default function NodesPage() {
     }
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('No session');
+      const auth = getFirebaseAuth();
+      const user = auth?.currentUser;
+      if (!user) throw new Error('No session');
+      const token = await user.getIdToken();
 
       const response = await fetch('/api/nodes/delete', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({ node_id: nodeId }),
       });
@@ -180,14 +166,16 @@ export default function NodesPage() {
 
     setIsUpdating(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('No session');
+      const auth = getFirebaseAuth();
+      const user = auth?.currentUser;
+      if (!user) throw new Error('No session');
+      const token = await user.getIdToken();
 
       const response = await fetch('/api/nodes/update', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           node_id: editingNode.id,
@@ -225,12 +213,14 @@ export default function NodesPage() {
     
     try {
       // Get session token
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-      
+      const auth = getFirebaseAuth();
+      const user = auth?.currentUser;
+      if (!user) return;
+      const token = await user.getIdToken();
+
       const response = await fetch('/api/nodes', {
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
         },
       });
       
@@ -257,8 +247,29 @@ export default function NodesPage() {
     );
   }
 
-  if (!user || user.email !== ADMIN_EMAIL) {
-    return null;
+  if (!user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Redirecting to login...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (user.email !== ADMIN_EMAIL) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center max-w-lg">
+          <h2 className="text-2xl font-bold">Access denied</h2>
+          <p className="mt-2 text-muted-foreground">You do not have permission to view this page.</p>
+          <div className="mt-4">
+            <a href="/dashboard" className="text-primary underline">Return to dashboard</a>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   const formatBytes = (bytes: number) => {
